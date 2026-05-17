@@ -1,0 +1,596 @@
+const {
+  ChannelType,
+  PermissionFlagsBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder
+} = require("discord.js");
+
+const fs = require("fs");
+const path = require("path");
+
+const notrufDbPath = path.join(__dirname, "notrufSetups.json");
+const verifyDbPath = path.join(__dirname, "verifySetups.json");
+
+function saveDb(db, dbPath) {
+  fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+}
+
+function generateCaptcha() {
+  return Math.floor(10000 + Math.random() * 90000).toString();
+}
+
+function getTicketButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("notruf_close")
+      .setLabel("Close")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+function getNotifyButton(ticketChannelId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`notruf_notify_ausruecken_${ticketChannelId}`)
+      .setLabel("Ausrücken")
+      .setStyle(ButtonStyle.Primary)
+  );
+}
+
+function buildTopic(data) {
+  return [
+    `owner=${data.owner}`,
+    `type=${data.type}`,
+    `notifyChannelId=${data.notifyChannelId || "none"}`,
+    `notifyMessageId=${data.notifyMessageId || "none"}`,
+    `ticketMessageId=${data.ticketMessageId || "none"}`,
+    `akteThreadId=${data.akteThreadId || "none"}`,
+    `akteMessageId=${data.akteMessageId || "none"}`,
+    `dispatched=${data.dispatched || "false"}`
+  ].join(";");
+}
+
+function parseTopic(topic = "") {
+  const data = {};
+
+  topic.split(";").forEach(part => {
+    const [key, value] = part.split("=");
+    if (key && value) data[key] = value;
+  });
+
+  return {
+    owner: data.owner,
+    type: data.type || "Notruf",
+    notifyChannelId: data.notifyChannelId || "none",
+    notifyMessageId: data.notifyMessageId || "none",
+    ticketMessageId: data.ticketMessageId || "none",
+    akteThreadId: data.akteThreadId || "none",
+    akteMessageId: data.akteMessageId || "none",
+    dispatched: data.dispatched || "false"
+  };
+}
+
+function setStatusField(embed, value) {
+  const fields = embed.data.fields || [];
+  const index = fields.findIndex(field => field.name === "Status");
+
+  if (index === -1) {
+    embed.addFields({ name: "Status", value, inline: true });
+  } else {
+    embed.spliceFields(index, 1, { name: "Status", value, inline: true });
+  }
+
+  return embed;
+}
+
+async function hasActiveNotruf(guild, userId, categoryId) {
+  return guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildText &&
+    channel.parentId === categoryId &&
+    channel.topic?.includes(`owner=${userId}`)
+  );
+}
+
+async function getOrCreateAkteThread(interaction, db, setup) {
+  if (!setup.akten) setup.akten = {};
+
+  const savedThreadId = setup.akten[interaction.user.id];
+
+  if (savedThreadId) {
+    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
+    if (oldThread) return oldThread;
+  }
+
+  const forum = await interaction.guild.channels.fetch(setup.forumAktenChannelId);
+  const username = interaction.user.username.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+
+  const thread = await forum.threads.create({
+    name: `Akte-${username}`,
+    message: {
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(`📁 Akte von ${interaction.user.username}`)
+          .setDescription(`Automatisch erstellte Notruf-Akte für ${interaction.user}.`)
+          .setColor("Blue")
+      ]
+    }
+  });
+
+  setup.akten[interaction.user.id] = thread.id;
+  db[interaction.guild.id] = setup;
+  saveDb(db, notrufDbPath);
+
+  return thread;
+}
+
+module.exports = {
+  name: "interactionCreate",
+
+  async execute(interaction) {
+    try {
+      if (interaction.isChatInputCommand()) {
+        const command = interaction.client.commands.get(interaction.commandName);
+        if (!command) return;
+        return command.execute(interaction);
+      }
+
+      // VERIFY BUTTON
+      if (interaction.isButton() && interaction.customId === "verify_start") {
+        if (!fs.existsSync(verifyDbPath)) return;
+
+        const verifyDb = JSON.parse(fs.readFileSync(verifyDbPath, "utf8"));
+        const verifySetup = verifyDb[interaction.guild.id];
+
+        if (!verifySetup) {
+          return interaction.reply({
+            content: "❌ Verify-System wurde nicht eingerichtet.",
+            ephemeral: true
+          });
+        }
+
+        if (!verifySetup.captchaEnabled && !verifySetup.robloxUsernameEnabled) {
+          const member = await interaction.guild.members.fetch(interaction.user.id);
+
+          if (verifySetup.roleAddId) {
+            await member.roles.add(verifySetup.roleAddId).catch(() => {});
+          }
+
+          if (verifySetup.roleRemoveId) {
+            await member.roles.remove(verifySetup.roleRemoveId).catch(() => {});
+          }
+
+          return interaction.reply({
+            content: "✅ Du wurdest erfolgreich verifiziert.",
+            ephemeral: true
+          });
+        }
+
+        const captchaCode = generateCaptcha();
+
+        const modal = new ModalBuilder()
+          .setCustomId(`verify_modal_${captchaCode}`)
+          .setTitle("Verifizierung");
+
+        if (verifySetup.captchaEnabled) {
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId("captcha")
+                .setLabel(`Captcha: ${captchaCode}`)
+                .setPlaceholder("Gib den Code ein")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+            )
+          );
+        }
+
+        if (verifySetup.robloxUsernameEnabled) {
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId("roblox_username")
+                .setLabel("Roblox Username")
+                .setPlaceholder("Dein Roblox Name")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+            )
+          );
+        }
+
+        return interaction.showModal(modal);
+      }
+
+      // VERIFY MODAL
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("verify_modal_")) {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!fs.existsSync(verifyDbPath)) return;
+
+        const verifyDb = JSON.parse(fs.readFileSync(verifyDbPath, "utf8"));
+        const verifySetup = verifyDb[interaction.guild.id];
+
+        if (!verifySetup) {
+          return interaction.editReply({
+            content: "❌ Verify-System wurde nicht eingerichtet."
+          });
+        }
+
+        const captchaCode = interaction.customId.replace("verify_modal_", "");
+
+        if (verifySetup.captchaEnabled) {
+          const inputCaptcha = interaction.fields.getTextInputValue("captcha");
+
+          if (inputCaptcha !== captchaCode) {
+            return interaction.editReply({
+              content: "❌ Captcha falsch."
+            });
+          }
+        }
+
+        const member = await interaction.guild.members.fetch(interaction.user.id);
+        const botMember = await interaction.guild.members.fetchMe();
+
+        if (verifySetup.roleAddId) {
+          await member.roles.add(verifySetup.roleAddId).catch(() => {});
+        }
+
+        if (verifySetup.roleRemoveId) {
+          await member.roles.remove(verifySetup.roleRemoveId).catch(() => {});
+        }
+
+        let robloxText = "";
+
+        if (verifySetup.robloxUsernameEnabled) {
+          const robloxUsername = interaction.fields
+            .getTextInputValue("roblox_username")
+            .slice(0, 32);
+
+          if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames)) {
+            robloxText = `\n⚠️ Nickname konnte nicht geändert werden: Bot hat keine **Manage Nicknames** Berechtigung.`;
+          } else if (!member.manageable) {
+            robloxText = `\n⚠️ Nickname konnte nicht geändert werden: Bot-Rolle ist zu niedrig.`;
+          } else {
+            try {
+              await member.setNickname(robloxUsername, "Verify Roblox Username");
+              robloxText = `\nRoblox Username / Nickname: **${robloxUsername}**`;
+            } catch (error) {
+              console.error(error);
+              robloxText = `\n⚠️ Nickname konnte nicht geändert werden.`;
+            }
+          }
+        }
+
+        return interaction.editReply({
+          content: `✅ Du wurdest erfolgreich verifiziert.${robloxText}`
+        });
+      }
+
+      // NOTRUF SYSTEM
+      if (!fs.existsSync(notrufDbPath)) return;
+
+      const db = JSON.parse(fs.readFileSync(notrufDbPath, "utf8"));
+      const setup = db[interaction.guild.id];
+      if (!setup) return;
+
+      if (interaction.isButton() && interaction.customId.startsWith("notruf_create_")) {
+        const buttonIndex = Number(interaction.customId.replace("notruf_create_", ""));
+
+        const activeNotruf = await hasActiveNotruf(
+          interaction.guild,
+          interaction.user.id,
+          setup.categoryId
+        );
+
+        if (activeNotruf) {
+          return interaction.reply({
+            content: `❌ Du hast bereits einen aktiven Notruf: ${activeNotruf}`,
+            ephemeral: true
+          });
+        }
+
+        const select = new StringSelectMenuBuilder()
+          .setCustomId(`notruf_priority_${buttonIndex}`)
+          .setPlaceholder("Priorität auswählen")
+          .addOptions(
+            new StringSelectMenuOptionBuilder().setLabel("Normal").setValue("Normal").setEmoji("🟢"),
+            new StringSelectMenuOptionBuilder().setLabel("Wichtig").setValue("Wichtig").setEmoji("🟠"),
+            new StringSelectMenuOptionBuilder().setLabel("Extrem Wichtig").setValue("Extrem Wichtig").setEmoji("🔴")
+          );
+
+        return interaction.reply({
+          content: "Bitte wähle die Priorität deines Notrufs aus:",
+          components: [new ActionRowBuilder().addComponents(select)],
+          ephemeral: true
+        });
+      }
+
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("notruf_priority_")) {
+        const buttonIndex = Number(interaction.customId.replace("notruf_priority_", ""));
+        const priority = interaction.values[0];
+        const buttonText = setup.buttons[buttonIndex];
+
+        const modal = new ModalBuilder()
+          .setCustomId(`notruf_modal_${buttonIndex}_${priority}`)
+          .setTitle(`${buttonText}-Notruf`);
+
+        const woInput = new TextInputBuilder()
+          .setCustomId("notruf_wo")
+          .setLabel("Wo?")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const warumInput = new TextInputBuilder()
+          .setCustomId("notruf_warum")
+          .setLabel("Warum rufen Sie an?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const infoInput = new TextInputBuilder()
+          .setCustomId("notruf_infos")
+          .setLabel("Weitere Informationen?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(woInput),
+          new ActionRowBuilder().addComponents(warumInput),
+          new ActionRowBuilder().addComponents(infoInput)
+        );
+
+        return interaction.showModal(modal);
+      }
+
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("notruf_modal_")) {
+        await interaction.deferReply({ ephemeral: true });
+
+        const parts = interaction.customId.replace("notruf_modal_", "").split("_");
+        const buttonIndex = Number(parts[0]);
+        const priority = parts.slice(1).join("_");
+        const buttonText = setup.buttons[buttonIndex];
+
+        const activeNotruf = await hasActiveNotruf(
+          interaction.guild,
+          interaction.user.id,
+          setup.categoryId
+        );
+
+        if (activeNotruf) {
+          return interaction.editReply({
+            content: `❌ Du hast bereits einen aktiven Notruf: ${activeNotruf}`
+          });
+        }
+
+        const wo = interaction.fields.getTextInputValue("notruf_wo");
+        const warum = interaction.fields.getTextInputValue("notruf_warum");
+        const infos =
+          interaction.fields.getTextInputValue("notruf_infos") ||
+          "Keine weiteren Informationen.";
+
+        const randomId = Math.floor(1000 + Math.random() * 9000);
+        const timestamp = Math.floor(Date.now() / 1000);
+
+        const channel = await interaction.guild.channels.create({
+          name: `${buttonText}-notruf-${randomId}`,
+          type: ChannelType.GuildText,
+          parent: setup.categoryId,
+          topic: "loading",
+          permissionOverwrites: [
+            {
+              id: interaction.guild.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+              id: interaction.user.id,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory
+              ]
+            },
+            {
+              id: setup.roleId,
+              allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory
+              ]
+            }
+          ]
+        });
+
+        const ticketEmbed = new EmbedBuilder()
+          .setTitle(`🚨 ${buttonText}-Notruf`)
+          .setColor("Red")
+          .addFields(
+            { name: "Ersteller", value: `${interaction.user}`, inline: true },
+            { name: "Status", value: "Offen", inline: true },
+            { name: "📍 Wo?", value: wo, inline: false },
+            { name: "📞 Warum rufen Sie an?", value: warum, inline: false },
+            { name: "⚠️ Priorität", value: priority, inline: false },
+            { name: "ℹ️ Weitere Informationen", value: infos, inline: false }
+          );
+
+        const ticketMessage = await channel.send({
+          content: `<@&${setup.roleId}> ${interaction.user}`,
+          embeds: [ticketEmbed],
+          components: [getTicketButtons()]
+        });
+
+        const notifyChannel = await interaction.guild.channels.fetch(setup.notifyChannelId);
+
+        const notifyEmbed = new EmbedBuilder()
+          .setTitle(`🚨 Neuer ${buttonText}-Notruf`)
+          .setColor("Red")
+          .addFields(
+            { name: "Ersteller", value: `${interaction.user}`, inline: true },
+            { name: "Status", value: "Nicht ausgerückt", inline: true },
+            { name: "Notruf Kanal", value: `${channel}`, inline: true },
+            { name: "📍 Wo?", value: wo, inline: false },
+            { name: "📞 Warum rufen Sie an?", value: warum, inline: false },
+            { name: "⚠️ Priorität", value: priority, inline: false },
+            { name: "ℹ️ Weitere Informationen", value: infos, inline: false }
+          );
+
+        const notifyMessage = await notifyChannel.send({
+          content: `<@&${setup.pingRoleId}>`,
+          embeds: [notifyEmbed],
+          components: [getNotifyButton(channel.id)]
+        });
+
+        const akteThread = await getOrCreateAkteThread(interaction, db, setup);
+
+        const akteEmbed = new EmbedBuilder()
+          .setTitle(`📄 Neuer Notruf: ${buttonText}`)
+          .setColor("Red")
+          .addFields(
+            { name: "Person", value: `${interaction.user}`, inline: true },
+            { name: "Status", value: "Nicht ausgerückt", inline: true },
+            { name: "Notruf Kanal", value: `${channel}`, inline: true },
+            { name: "Zeitpunkt", value: `<t:${timestamp}:F>`, inline: false },
+            { name: "📍 Wo?", value: wo, inline: false },
+            { name: "📞 Warum rufen Sie an?", value: warum, inline: false },
+            { name: "⚠️ Priorität", value: priority, inline: false },
+            { name: "ℹ️ Weitere Informationen", value: infos, inline: false },
+            { name: "🚓 Ausgerückt von", value: "Noch niemand", inline: false }
+          );
+
+        const akteMessage = await akteThread.send({
+          embeds: [akteEmbed]
+        });
+
+        await channel.setTopic(
+          buildTopic({
+            owner: interaction.user.id,
+            type: buttonText,
+            notifyChannelId: notifyChannel.id,
+            notifyMessageId: notifyMessage.id,
+            ticketMessageId: ticketMessage.id,
+            akteThreadId: akteThread.id,
+            akteMessageId: akteMessage.id,
+            dispatched: "false"
+          })
+        );
+
+        return interaction.editReply({
+          content: `✅ Dein Notruf wurde erstellt: ${channel}`
+        });
+      }
+
+      if (!interaction.isButton()) return;
+
+      if (interaction.customId.startsWith("notruf_notify_ausruecken_")) {
+        const hasNotrufRole = interaction.member.roles.cache.has(setup.roleId);
+
+        if (!hasNotrufRole) {
+          return interaction.reply({
+            content: "❌ Keine Rechte.",
+            ephemeral: true
+          });
+        }
+
+        const ticketChannelId = interaction.customId.replace("notruf_notify_ausruecken_", "");
+        const ticketChannel = await interaction.guild.channels.fetch(ticketChannelId).catch(() => null);
+
+        if (!ticketChannel) {
+          return interaction.reply({
+            content: "❌ Notruf-Kanal wurde nicht gefunden.",
+            ephemeral: true
+          });
+        }
+
+        const topicData = parseTopic(ticketChannel.topic);
+        const timestamp = Math.floor(Date.now() / 1000);
+
+        const notifyEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor("Green");
+
+        setStatusField(
+          notifyEmbed,
+          `Einsatzkräfte unterwegs | ausgelöst von ${interaction.user}`
+        );
+
+        await interaction.update({
+          embeds: [notifyEmbed],
+          components: []
+        });
+
+        await ticketChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("🚨 Einsatzkräfte sind unterwegs")
+              .setDescription(`Einsatzkräfte sind unterwegs zum **${topicData.type}-Notruf**.`)
+              .setColor("Orange")
+          ]
+        });
+
+        await ticketChannel.setTopic(
+          buildTopic({
+            ...topicData,
+            dispatched: "true"
+          })
+        );
+
+        if (topicData.akteThreadId !== "none" && topicData.akteMessageId !== "none") {
+          const akteThread = await interaction.guild.channels.fetch(topicData.akteThreadId).catch(() => null);
+
+          if (akteThread) {
+            const akteMessage = await akteThread.messages.fetch(topicData.akteMessageId).catch(() => null);
+
+            if (akteMessage) {
+              const akteEmbed = EmbedBuilder.from(akteMessage.embeds[0])
+                .setColor("Green");
+
+              setStatusField(akteEmbed, "Einsatzkräfte unterwegs");
+
+              const index = akteEmbed.data.fields.findIndex(f => f.name === "🚓 Ausgerückt von");
+
+              if (index !== -1) {
+                akteEmbed.spliceFields(index, 1, {
+                  name: "🚓 Ausgerückt von",
+                  value: `${interaction.user}`,
+                  inline: false
+                });
+              }
+
+              akteEmbed.addFields({
+                name: "Ausrück-Zeitpunkt",
+                value: `<t:${timestamp}:F>`,
+                inline: false
+              });
+
+              await akteMessage.edit({
+                embeds: [akteEmbed]
+              });
+            }
+          }
+        }
+
+        return;
+      }
+
+      if (interaction.customId === "notruf_close") {
+        const topicData = parseTopic(interaction.channel.topic);
+        const hasNotrufRole = interaction.member.roles.cache.has(setup.roleId);
+        const isOwner = topicData.owner === interaction.user.id;
+
+        if (!hasNotrufRole && !isOwner) {
+          return interaction.reply({
+            content: "❌ Du darfst diesen Notruf nicht schließen.",
+            ephemeral: true
+          });
+        }
+
+        return interaction.channel.delete().catch(() => {});
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+};
