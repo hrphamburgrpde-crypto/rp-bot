@@ -20,12 +20,10 @@ async function getOrCreateAkteThread(interaction, db, setup, user) {
 
   if (savedThreadId) {
     const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
-
     if (oldThread) return oldThread;
   }
 
   const forum = await interaction.guild.channels.fetch(setup.forumChannelId);
-
   const username = user.username.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
 
   const thread = await forum.threads.create({
@@ -34,16 +32,14 @@ async function getOrCreateAkteThread(interaction, db, setup, user) {
       embeds: [
         new EmbedBuilder()
           .setTitle(`📁 Akte von ${user.username}`)
-          .setDescription(`Automatisch erstellte Akte für ${user}.`)
+          .setDescription(`Gemeinsame Akte für Einträge von ${user}.`)
           .setColor("Blue")
       ]
     }
   });
 
   setup.akten[user.id] = thread.id;
-
   db[interaction.guild.id] = setup;
-
   saveDb(db);
 
   return thread;
@@ -64,21 +60,8 @@ module.exports = {
     .addStringOption(option =>
       option
         .setName("typ")
-        .setDescription("Art des Eintrags")
-        .addChoices(
-          { name: "Strafzettel", value: "Strafzettel" },
-          { name: "Verwarnung", value: "Verwarnung" },
-          { name: "Festnahme", value: "Festnahme" },
-          { name: "Einsatzbericht", value: "Einsatzbericht" },
-          { name: "Sonstiges", value: "Sonstiges" }
-        )
-        .setRequired(true)
-    )
-
-    .addStringOption(option =>
-      option
-        .setName("titel")
-        .setDescription("Titel")
+        .setDescription("Typ auswählen")
+        .setAutocomplete(true)
         .setRequired(true)
     )
 
@@ -93,8 +76,33 @@ module.exports = {
       option
         .setName("strafe")
         .setDescription("Strafe / Maßnahme")
-        .setRequired(false)
+        .setRequired(true)
     ),
+
+  async autocomplete(interaction) {
+    if (!fs.existsSync(dbPath)) {
+      return interaction.respond([]);
+    }
+
+    const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+    const setup = db[interaction.guild.id];
+
+    if (!setup || !setup.typen) {
+      return interaction.respond([]);
+    }
+
+    const focused = interaction.options.getFocused().toLowerCase();
+
+    const choices = setup.typen
+      .filter(type => type.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map(type => ({
+        name: type,
+        value: type
+      }));
+
+    return interaction.respond(choices);
+  },
 
   async execute(interaction) {
     if (!fs.existsSync(dbPath)) {
@@ -127,53 +135,41 @@ module.exports = {
 
     const person = interaction.options.getUser("person");
     const typ = interaction.options.getString("typ");
-    const titel = interaction.options.getString("titel");
     const beschreibung = interaction.options.getString("beschreibung");
-    const strafe = interaction.options.getString("strafe") || "Keine Angabe";
+    const strafe = interaction.options.getString("strafe");
 
-    const timestamp = Math.floor(Date.now() / 1000);
+    const allowedTypes = setup.typen || [];
 
-    const thread = await getOrCreateAkteThread(
-      interaction,
-      db,
-      setup,
-      person
+    const typeExists = allowedTypes.some(
+      type => type.toLowerCase() === typ.toLowerCase()
     );
 
+    if (!typeExists) {
+      return interaction.reply({
+        content: `❌ Diesen Typ gibt es nicht.\nErlaubte Typen: ${allowedTypes.join(", ")}`,
+        ephemeral: true
+      });
+    }
+
+    const finalTyp = allowedTypes.find(
+      type => type.toLowerCase() === typ.toLowerCase()
+    );
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const thread = await getOrCreateAkteThread(interaction, db, setup, person);
+
     const embed = new EmbedBuilder()
-      .setTitle(`📄 ${typ}: ${titel}`)
+      .setTitle(`📄 ${finalTyp}`)
       .setColor("Orange")
       .addFields(
-        {
-          name: "Person",
-          value: `${person}`,
-          inline: true
-        },
-        {
-          name: "Eingetragen von",
-          value: `${interaction.user}`,
-          inline: true
-        },
-        {
-          name: "Zeitpunkt",
-          value: `<t:${timestamp}:F>`,
-          inline: false
-        },
-        {
-          name: "Beschreibung",
-          value: beschreibung,
-          inline: false
-        },
-        {
-          name: "Strafe / Maßnahme",
-          value: strafe,
-          inline: false
-        }
+        { name: "Person", value: `${person}`, inline: true },
+        { name: "Eingetragen von", value: `${interaction.user}`, inline: true },
+        { name: "Zeitpunkt", value: `<t:${timestamp}:F>`, inline: false },
+        { name: "Beschreibung", value: beschreibung, inline: false },
+        { name: "Strafe / Maßnahme", value: strafe, inline: false }
       );
 
-    await thread.send({
-      embeds: [embed]
-    });
+    await thread.send({ embeds: [embed] });
 
     return interaction.reply({
       content: `✅ Eintrag wurde erstellt: ${thread}`,

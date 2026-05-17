@@ -37,7 +37,7 @@ module.exports = {
     .addStringOption(option =>
       option
         .setName("typen")
-        .setDescription("Eintrags-Typen mit Komma trennen, z.B. Falsch Geschossen,Döner Party")
+        .setDescription("Eigene Typen mit Komma trennen, z.B. Strafzettel,Döner Party")
         .setRequired(true)
     ),
 
@@ -52,13 +52,6 @@ module.exports = {
         .map(t => t.trim())
         .filter(Boolean)
     )];
-
-    if (!typen.length) {
-      return interaction.reply({
-        content: "❌ Bitte gib mindestens einen Typ an.",
-        ephemeral: true
-      });
-    }
 
     let db = {};
 
