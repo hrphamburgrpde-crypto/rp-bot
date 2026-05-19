@@ -4,10 +4,7 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const fs = require("fs");
-const path = require("path");
-
-const dbPath = path.join(__dirname, "../database/akteSetups.json");
+const GuildSetup = require("../models/GuildSetup");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -18,7 +15,6 @@ module.exports = {
       PermissionFlagsBits.KickMembers |
       PermissionFlagsBits.BanMembers
     )
-
     .addChannelOption(option =>
       option
         .setName("forum-kanal")
@@ -26,18 +22,16 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildForum)
         .setRequired(true)
     )
-
     .addRoleOption(option =>
       option
         .setName("eintrag-rechte-rolle")
         .setDescription("Rolle, die Akten-Einträge erstellen darf")
         .setRequired(true)
     )
-
     .addStringOption(option =>
       option
         .setName("typen")
-        .setDescription("Eigene Typen mit Komma trennen, z.B. Strafzettel,Döner Party")
+        .setDescription("Eigene Typen mit Komma trennen")
         .setRequired(true)
     ),
 
@@ -47,29 +41,27 @@ module.exports = {
     const typenInput = interaction.options.getString("typen");
 
     const typen = [...new Set(
-      typenInput
-        .split(",")
-        .map(t => t.trim())
-        .filter(Boolean)
+      typenInput.split(",").map(t => t.trim()).filter(Boolean)
     )];
 
-    let db = {};
-
-    if (fs.existsSync(dbPath)) {
-      db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    }
-
-    db[interaction.guild.id] = {
-      forumChannelId: forum.id,
-      entryRoleId: role.id,
-      typen,
-      akten: db[interaction.guild.id]?.akten || {}
-    };
-
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+    await GuildSetup.findOneAndUpdate(
+      { guildId: interaction.guild.id },
+      {
+        $set: {
+          guildId: interaction.guild.id,
+          "akte.forumChannelId": forum.id,
+          "akte.entryRoleId": role.id,
+          "akte.typen": typen
+        },
+        $setOnInsert: {
+          "akte.akten": {}
+        }
+      },
+      { upsert: true }
+    );
 
     return interaction.reply({
-      content: `✅ Akten-System eingerichtet.\nTypen: ${typen.join(", ")}`,
+      content: `✅ Akten-System wurde gespeichert.\nTypen: ${typen.join(", ")}`,
       ephemeral: true
     });
   }

@@ -8,10 +8,7 @@ const {
   ButtonStyle
 } = require("discord.js");
 
-const fs = require("fs");
-const path = require("path");
-
-const dbPath = path.join(__dirname, "../database/verifySetups.json");
+const GuildSetup = require("../models/GuildSetup");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,7 +19,6 @@ module.exports = {
       PermissionFlagsBits.KickMembers |
       PermissionFlagsBits.BanMembers
     )
-
     .addChannelOption(option =>
       option
         .setName("kanal")
@@ -30,14 +26,12 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-
     .addRoleOption(option =>
       option
         .setName("rolle_adden")
         .setDescription("Rolle, die nach Verify gegeben wird")
         .setRequired(true)
     )
-
     .addStringOption(option =>
       option
         .setName("captcha")
@@ -48,18 +42,16 @@ module.exports = {
         )
         .setRequired(true)
     )
-
     .addStringOption(option =>
       option
         .setName("roblox_username")
-        .setDescription("Roblox-Username abfragen und als Nickname setzen?")
+        .setDescription("Roblox Username abfragen?")
         .addChoices(
           { name: "An", value: "an" },
           { name: "Aus", value: "aus" }
         )
         .setRequired(true)
     )
-
     .addRoleOption(option =>
       option
         .setName("rolle_entfernen")
@@ -70,13 +62,9 @@ module.exports = {
   async execute(interaction) {
     const kanal = interaction.options.getChannel("kanal");
     const rolleAdden = interaction.options.getRole("rolle_adden");
+    const rolleEntfernen = interaction.options.getRole("rolle_entfernen");
     const captcha = interaction.options.getString("captcha");
     const robloxUsername = interaction.options.getString("roblox_username");
-    const rolleEntfernen = interaction.options.getRole("rolle_entfernen");
-
-    if (!fs.existsSync(path.join(__dirname, "../database"))) {
-      fs.mkdirSync(path.join(__dirname, "../database"), { recursive: true });
-    }
 
     const embed = new EmbedBuilder()
       .setTitle("✅ Verifizierung")
@@ -95,25 +83,26 @@ module.exports = {
       components: [row]
     });
 
-    let db = {};
-
-    if (fs.existsSync(dbPath)) {
-      db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    }
-
-    db[interaction.guild.id] = {
-      channelId: kanal.id,
-      messageId: message.id,
-      roleAddId: rolleAdden.id,
-      roleRemoveId: rolleEntfernen ? rolleEntfernen.id : null,
-      captchaEnabled: captcha === "an",
-      robloxUsernameEnabled: robloxUsername === "an"
-    };
-
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+    await GuildSetup.findOneAndUpdate(
+      { guildId: interaction.guild.id },
+      {
+        $set: {
+          guildId: interaction.guild.id,
+          verify: {
+            channelId: kanal.id,
+            messageId: message.id,
+            roleAddId: rolleAdden.id,
+            roleRemoveId: rolleEntfernen ? rolleEntfernen.id : null,
+            captchaEnabled: captcha === "an",
+            robloxUsernameEnabled: robloxUsername === "an"
+          }
+        }
+      },
+      { upsert: true }
+    );
 
     return interaction.reply({
-      content: "✅ Verify-System wurde eingerichtet.",
+      content: "✅ Verify-System wurde gespeichert.",
       ephemeral: true
     });
   }

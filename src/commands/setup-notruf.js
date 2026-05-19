@@ -8,10 +8,7 @@ const {
   ButtonStyle
 } = require("discord.js");
 
-const fs = require("fs");
-const path = require("path");
-
-const dbPath = path.join(__dirname, "../database/notrufSetups.json");
+const GuildSetup = require("../models/GuildSetup");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,7 +19,6 @@ module.exports = {
       PermissionFlagsBits.KickMembers |
       PermissionFlagsBits.BanMembers
     )
-
     .addChannelOption(option =>
       option
         .setName("kanal")
@@ -30,21 +26,18 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-
     .addRoleOption(option =>
       option
         .setName("leitstellen-rolle")
         .setDescription("Rolle, die Notruf-Kanäle sehen und schreiben darf")
         .setRequired(true)
     )
-
     .addRoleOption(option =>
       option
         .setName("einsatz-rolle")
         .setDescription("Rolle, die Ausrücken darf")
         .setRequired(true)
     )
-
     .addChannelOption(option =>
       option
         .setName("kategorie-notrufe")
@@ -52,7 +45,6 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true)
     )
-
     .addChannelOption(option =>
       option
         .setName("benachrichtigungs-kanal")
@@ -60,11 +52,10 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-
     .addStringOption(option =>
       option
         .setName("buttons")
-        .setDescription("Buttons getrennt mit Komma, z.B. 110,112")
+        .setDescription("Buttons getrennt mit Komma, z.B. Notruf,Feuerwehr")
         .setRequired(true)
     ),
 
@@ -79,6 +70,13 @@ module.exports = {
     const buttons = [...new Set(
       buttonsInput.split(",").map(b => b.trim()).filter(Boolean)
     )].slice(0, 5);
+
+    if (!buttons.length) {
+      return interaction.reply({
+        content: "❌ Bitte gib mindestens einen Button an.",
+        ephemeral: true
+      });
+    }
 
     const embed = new EmbedBuilder()
       .setTitle("📞 Notruf-System")
@@ -101,27 +99,29 @@ module.exports = {
       components: [row]
     });
 
-    let db = {};
-    if (fs.existsSync(dbPath)) {
-      db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    }
-
-    db[interaction.guild.id] = {
-      channelId: kanal.id,
-      leitstellenRoleId: leitstellenRole.id,
-      einsatzRoleId: einsatzRole.id,
-      roleId: leitstellenRole.id,
-      pingRoleId: einsatzRole.id,
-      categoryId: kategorie.id,
-      notifyChannelId: notifyChannel.id,
-      messageId: message.id,
-      buttons
-    };
-
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+    await GuildSetup.findOneAndUpdate(
+      { guildId: interaction.guild.id },
+      {
+        $set: {
+          guildId: interaction.guild.id,
+          notruf: {
+            channelId: kanal.id,
+            leitstellenRoleId: leitstellenRole.id,
+            einsatzRoleId: einsatzRole.id,
+            roleId: leitstellenRole.id,
+            pingRoleId: einsatzRole.id,
+            categoryId: kategorie.id,
+            notifyChannelId: notifyChannel.id,
+            messageId: message.id,
+            buttons
+          }
+        }
+      },
+      { upsert: true }
+    );
 
     return interaction.reply({
-      content: "✅ Notruf-System wurde eingerichtet.",
+      content: "✅ Notruf-System wurde gespeichert.",
       ephemeral: true
     });
   }

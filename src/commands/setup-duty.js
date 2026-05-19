@@ -8,10 +8,7 @@ const {
   ButtonStyle
 } = require("discord.js");
 
-const fs = require("fs");
-const path = require("path");
-
-const dbPath = path.join(__dirname, "../database/dutySetups.json");
+const GuildSetup = require("../models/GuildSetup");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -19,24 +16,28 @@ module.exports = {
     .setDescription("Erstellt ein Dienst-System")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addChannelOption(option =>
-      option.setName("kanal")
+      option
+        .setName("kanal")
         .setDescription("Kanal für das Duty-Panel")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
     .addRoleOption(option =>
-      option.setName("on_dutyrolle")
+      option
+        .setName("on_dutyrolle")
         .setDescription("Rolle beim Einchecken")
         .setRequired(true)
     )
     .addChannelOption(option =>
-      option.setName("logkanal")
+      option
+        .setName("logkanal")
         .setDescription("Log-Kanal")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
     .addRoleOption(option =>
-      option.setName("off_dutyrolle")
+      option
+        .setName("off_dutyrolle")
         .setDescription("Rolle beim Auschecken")
         .setRequired(false)
     ),
@@ -57,7 +58,6 @@ module.exports = {
         .setCustomId("duty_checkin")
         .setLabel("Einchecken")
         .setStyle(ButtonStyle.Success),
-
       new ButtonBuilder()
         .setCustomId("duty_checkout")
         .setLabel("Auschecken")
@@ -69,24 +69,26 @@ module.exports = {
       components: [row]
     });
 
-    let db = {};
-    if (fs.existsSync(dbPath)) {
-      db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    }
-
-    db[interaction.guild.id] = {
-      channelId: kanal.id,
-      messageId: message.id,
-      onDutyRoleId: onDutyRole.id,
-      offDutyRoleId: offDutyRole ? offDutyRole.id : null,
-      logChannelId: logKanal.id,
-      activeUsers: {}
-    };
-
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+    await GuildSetup.findOneAndUpdate(
+      { guildId: interaction.guild.id },
+      {
+        $set: {
+          guildId: interaction.guild.id,
+          duty: {
+            channelId: kanal.id,
+            messageId: message.id,
+            onDutyRoleId: onDutyRole.id,
+            offDutyRoleId: offDutyRole ? offDutyRole.id : null,
+            logChannelId: logKanal.id,
+            activeUsers: {}
+          }
+        }
+      },
+      { upsert: true }
+    );
 
     return interaction.reply({
-      content: "✅ Duty-System wurde eingerichtet.",
+      content: "✅ Duty-System wurde gespeichert.",
       ephemeral: true
     });
   }
