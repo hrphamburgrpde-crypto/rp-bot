@@ -112,7 +112,10 @@ async function getOrCreateAkteThread(interaction, user) {
   const savedThreadId = akteSetup.akten[user.id];
 
   if (savedThreadId) {
-    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
+    const oldThread = await interaction.guild.channels
+      .fetch(savedThreadId)
+      .catch(() => null);
+
     if (oldThread) return oldThread;
   }
 
@@ -148,7 +151,9 @@ async function updateDutyPanel(guild, setup) {
   const users = Object.entries(setup.activeUsers || {});
 
   const description = users.length
-    ? users.map(([userId, data], index) => `${index + 1}. <@${userId}> — seit <t:${data.since}:R>`).join("\n")
+    ? users
+        .map(([userId, data], index) => `${index + 1}. <@${userId}> — seit <t:${data.since}:R>`)
+        .join("\n")
     : "Keine Personen im Dienst.";
 
   const embed = new EmbedBuilder()
@@ -568,7 +573,7 @@ module.exports = {
               ]
             },
             {
-              id: setup.roleId,
+              id: setup.leitstellenRoleId || setup.roleId,
               allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,
@@ -591,7 +596,7 @@ module.exports = {
           );
 
         const ticketMessage = await channel.send({
-          content: `<@&${setup.roleId}> ${interaction.user}`,
+          content: `<@&${setup.leitstellenRoleId || setup.roleId}> ${interaction.user}`,
           embeds: [ticketEmbed],
           components: [getTicketButtons()]
         });
@@ -612,7 +617,7 @@ module.exports = {
           );
 
         const notifyMessage = await notifyChannel.send({
-          content: `<@&${setup.pingRoleId}>`,
+          content: `<@&${setup.einsatzRoleId || setup.pingRoleId}>`,
           embeds: [notifyEmbed],
           components: [getNotifyButton(channel.id)]
         });
@@ -664,9 +669,12 @@ module.exports = {
       if (!interaction.isButton()) return;
 
       if (interaction.customId.startsWith("notruf_notify_ausruecken_")) {
-        const hasNotrufRole = interaction.member.roles.cache.has(setup.roleId);
+        const hasEinsatzRole =
+          interaction.member.roles.cache.has(setup.einsatzRoleId) ||
+          interaction.member.roles.cache.has(setup.pingRoleId) ||
+          interaction.member.roles.cache.has(setup.roleId);
 
-        if (!hasNotrufRole) {
+        if (!hasEinsatzRole) {
           return interaction.reply({
             content: "❌ Keine Rechte.",
             ephemeral: true
@@ -756,10 +764,14 @@ module.exports = {
 
       if (interaction.customId === "notruf_close") {
         const topicData = parseTopic(interaction.channel.topic);
-        const hasNotrufRole = interaction.member.roles.cache.has(setup.roleId);
+
+        const hasLeitstelleRole =
+          interaction.member.roles.cache.has(setup.leitstellenRoleId) ||
+          interaction.member.roles.cache.has(setup.roleId);
+
         const isOwner = topicData.owner === interaction.user.id;
 
-        if (!hasNotrufRole && !isOwner) {
+        if (!hasLeitstelleRole && !isOwner) {
           return interaction.reply({
             content: "❌ Du darfst diesen Notruf nicht schließen.",
             ephemeral: true

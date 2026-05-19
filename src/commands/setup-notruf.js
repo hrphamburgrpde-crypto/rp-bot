@@ -11,7 +11,7 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const dbPath = path.join(__dirname, "notrufSetups.json");
+const dbPath = path.join(__dirname, "../database/notrufSetups.json");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,40 +22,79 @@ module.exports = {
       PermissionFlagsBits.KickMembers |
       PermissionFlagsBits.BanMembers
     )
+
     .addChannelOption(option =>
-      option.setName("kanal").setDescription("Kanal für das Notruf-Panel").addChannelTypes(ChannelType.GuildText).setRequired(true)
+      option
+        .setName("kanal")
+        .setDescription("Kanal für das Notruf-Panel")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
     )
+
     .addRoleOption(option =>
-      option.setName("notruf-rolle").setDescription("Rolle, die Notrufe bearbeiten kann").setRequired(true)
+      option
+        .setName("leitstellen-rolle")
+        .setDescription("Rolle, die Notruf-Kanäle sehen und schreiben darf")
+        .setRequired(true)
     )
-    .addChannelOption(option =>
-      option.setName("kategorie-notrufe").setDescription("Kategorie für Notruf-Kanäle").addChannelTypes(ChannelType.GuildCategory).setRequired(true)
-    )
-    .addChannelOption(option =>
-      option.setName("benachrichtigungs-kanal").setDescription("Kanal für Notruf-Benachrichtigungen").addChannelTypes(ChannelType.GuildText).setRequired(true)
-    )
+
     .addRoleOption(option =>
-      option.setName("ping-rolle").setDescription("Rolle, die gepingt wird").setRequired(true)
+      option
+        .setName("einsatz-rolle")
+        .setDescription("Rolle, die Benachrichtigungen sieht und Ausrücken darf")
+        .setRequired(true)
     )
+
+    .addChannelOption(option =>
+      option
+        .setName("kategorie-notrufe")
+        .setDescription("Kategorie für Notruf-Kanäle")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true)
+    )
+
+    .addChannelOption(option =>
+      option
+        .setName("benachrichtigungs-kanal")
+        .setDescription("Kanal für Einsatz-Benachrichtigungen")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)
+    )
+
     .addStringOption(option =>
-      option.setName("buttons").setDescription("Buttons getrennt mit Komma, z.B. 110,112").setRequired(true)
-    )
-    .addChannelOption(option =>
-      option.setName("forum-akten-kanal").setDescription("Forum-Kanal für Notruf-Akten").addChannelTypes(ChannelType.GuildForum).setRequired(true)
+      option
+        .setName("buttons")
+        .setDescription("Buttons getrennt mit Komma, z.B. 110,112,Mechaniker")
+        .setRequired(true)
     ),
 
   async execute(interaction) {
     const kanal = interaction.options.getChannel("kanal");
-    const rolle = interaction.options.getRole("notruf-rolle");
+    const leitstellenRole = interaction.options.getRole("leitstellen-rolle");
+    const einsatzRole = interaction.options.getRole("einsatz-rolle");
     const kategorie = interaction.options.getChannel("kategorie-notrufe");
     const notifyChannel = interaction.options.getChannel("benachrichtigungs-kanal");
-    const pingRole = interaction.options.getRole("ping-rolle");
     const buttonsInput = interaction.options.getString("buttons");
-    const forumAktenKanal = interaction.options.getChannel("forum-akten-kanal");
 
     const buttons = [...new Set(
-      buttonsInput.split(",").map(b => b.trim()).filter(Boolean)
+      buttonsInput
+        .split(",")
+        .map(button => button.trim())
+        .filter(Boolean)
     )].slice(0, 5);
+
+    if (!buttons.length) {
+      return interaction.reply({
+        content: "❌ Bitte gib mindestens einen Button an.",
+        ephemeral: true
+      });
+    }
+
+    await notifyChannel.permissionOverwrites.edit(einsatzRole.id, {
+      ViewChannel: true,
+      SendMessages: false,
+      ReadMessageHistory: true
+    }).catch(() => {});
 
     const embed = new EmbedBuilder()
       .setTitle("📞 Notruf-System")
@@ -79,26 +118,31 @@ module.exports = {
     });
 
     let db = {};
+
     if (fs.existsSync(dbPath)) {
       db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
     }
 
     db[interaction.guild.id] = {
       channelId: kanal.id,
-      roleId: rolle.id,
+      roleId: leitstellenRole.id,
+      leitstellenRoleId: leitstellenRole.id,
+      einsatzRoleId: einsatzRole.id,
+      pingRoleId: einsatzRole.id,
       categoryId: kategorie.id,
       notifyChannelId: notifyChannel.id,
-      pingRoleId: pingRole.id,
-      forumAktenChannelId: forumAktenKanal.id,
       messageId: message.id,
-      buttons,
-      akten: db[interaction.guild.id]?.akten || {}
+      buttons
     };
 
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
-    await interaction.reply({
-      content: "✅ Notruf-System wurde eingerichtet.",
+    return interaction.reply({
+      content:
+        `✅ Notruf-System wurde eingerichtet.\n` +
+        `Leitstelle: ${leitstellenRole}\n` +
+        `Einsatz-Berechtigt: ${einsatzRole}\n` +
+        `Benachrichtigungs-Kanal: ${notifyChannel}`,
       ephemeral: true
     });
   }

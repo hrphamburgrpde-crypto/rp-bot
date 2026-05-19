@@ -13,10 +13,15 @@ function saveDb(db) {
   fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 }
 
-async function getOrCreateAkteThread(interaction, db, setup, user) {
+function cleanName(name) {
+  return name.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+}
+
+async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, discordUser = null) {
   if (!setup.akten) setup.akten = {};
 
-  const savedThreadId = setup.akten[user.id];
+  const akteKey = discordUser ? `discord_${discordUser.id}` : `roblox_${robloxUsername.toLowerCase()}`;
+  const savedThreadId = setup.akten[akteKey];
 
   if (savedThreadId) {
     const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
@@ -24,21 +29,25 @@ async function getOrCreateAkteThread(interaction, db, setup, user) {
   }
 
   const forum = await interaction.guild.channels.fetch(setup.forumChannelId);
-  const username = user.username.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+  const safeName = cleanName(robloxUsername) || "Unbekannt";
 
   const thread = await forum.threads.create({
-    name: `Akte-${username}`,
+    name: `Akte-${safeName}`,
     message: {
       embeds: [
         new EmbedBuilder()
-          .setTitle(`📁 Akte von ${user.username}`)
-          .setDescription(`Gemeinsame Akte für Einträge von ${user}.`)
+          .setTitle(`📁 Akte von ${robloxUsername}`)
+          .setDescription(
+            discordUser
+              ? `Gemeinsame Akte für Roblox-User **${robloxUsername}** / Discord: ${discordUser}.`
+              : `Gemeinsame Akte für Roblox-User **${robloxUsername}**.`
+          )
           .setColor("Blue")
       ]
     }
   });
 
-  setup.akten[user.id] = thread.id;
+  setup.akten[akteKey] = thread.id;
   db[interaction.guild.id] = setup;
   saveDb(db);
 
@@ -50,10 +59,10 @@ module.exports = {
     .setName("akten-eintrag")
     .setDescription("Erstellt einen Eintrag in einer Akte")
 
-    .addUserOption(option =>
+    .addStringOption(option =>
       option
-        .setName("person")
-        .setDescription("Person")
+        .setName("roblox_username")
+        .setDescription("Roblox Username")
         .setRequired(true)
     )
 
@@ -77,6 +86,13 @@ module.exports = {
         .setName("strafe")
         .setDescription("Strafe / Maßnahme")
         .setRequired(true)
+    )
+
+    .addUserOption(option =>
+      option
+        .setName("discord_user")
+        .setDescription("Discord User optional")
+        .setRequired(false)
     ),
 
   async autocomplete(interaction) {
@@ -133,7 +149,8 @@ module.exports = {
       });
     }
 
-    const person = interaction.options.getUser("person");
+    const robloxUsername = interaction.options.getString("roblox_username");
+    const discordUser = interaction.options.getUser("discord_user");
     const typ = interaction.options.getString("typ");
     const beschreibung = interaction.options.getString("beschreibung");
     const strafe = interaction.options.getString("strafe");
@@ -156,20 +173,54 @@ module.exports = {
     );
 
     const timestamp = Math.floor(Date.now() / 1000);
-    const thread = await getOrCreateAkteThread(interaction, db, setup, person);
+
+    const thread = await getOrCreateAkteThread(
+      interaction,
+      db,
+      setup,
+      robloxUsername,
+      discordUser
+    );
 
     const embed = new EmbedBuilder()
       .setTitle(`📄 ${finalTyp}`)
       .setColor("Orange")
       .addFields(
-        { name: "Person", value: `${person}`, inline: true },
-        { name: "Eingetragen von", value: `${interaction.user}`, inline: true },
-        { name: "Zeitpunkt", value: `<t:${timestamp}:F>`, inline: false },
-        { name: "Beschreibung", value: beschreibung, inline: false },
-        { name: "Strafe / Maßnahme", value: strafe, inline: false }
+        {
+          name: "Roblox Username",
+          value: robloxUsername,
+          inline: true
+        },
+        {
+          name: "Discord User",
+          value: discordUser ? `${discordUser}` : "Nicht angegeben",
+          inline: true
+        },
+        {
+          name: "Eingetragen von",
+          value: `${interaction.user}`,
+          inline: true
+        },
+        {
+          name: "Zeitpunkt",
+          value: `<t:${timestamp}:F>`,
+          inline: false
+        },
+        {
+          name: "Beschreibung",
+          value: beschreibung,
+          inline: false
+        },
+        {
+          name: "Strafe / Maßnahme",
+          value: strafe,
+          inline: false
+        }
       );
 
-    await thread.send({ embeds: [embed] });
+    await thread.send({
+      embeds: [embed]
+    });
 
     return interaction.reply({
       content: `✅ Eintrag wurde erstellt: ${thread}`,
