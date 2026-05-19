@@ -28,4 +28,6 @@ const guildSetupSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model("GuildSetup", guildSetupSchema);
+module.exports =
+  mongoose.models.GuildSetup ||
+  mongoose.model("GuildSetup", guildSetupSchema);
