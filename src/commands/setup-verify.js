@@ -11,7 +11,7 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const dbPath = path.join(__dirname, "verifySetups.json");
+const dbPath = path.join(__dirname, "../database/verifySetups.json");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -74,6 +74,10 @@ module.exports = {
     const robloxUsername = interaction.options.getString("roblox_username");
     const rolleEntfernen = interaction.options.getRole("rolle_entfernen");
 
+    if (!fs.existsSync(path.join(__dirname, "../database"))) {
+      fs.mkdirSync(path.join(__dirname, "../database"), { recursive: true });
+    }
+
     const embed = new EmbedBuilder()
       .setTitle("✅ Verifizierung")
       .setDescription("Klicke auf den Button, um dich zu verifizieren.")
@@ -92,6 +96,7 @@ module.exports = {
     });
 
     let db = {};
+
     if (fs.existsSync(dbPath)) {
       db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
     }

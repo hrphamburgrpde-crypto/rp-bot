@@ -14,15 +14,22 @@ function saveDb(db) {
 }
 
 function cleanName(name) {
-  return name.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+  return String(name || "Unbekannt")
+    .replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
 }
 
-async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, discordUser) {
+async function getOrCreateAkteThread(
+  interaction,
+  db,
+  setup,
+  robloxUsername,
+  discordUser = null
+) {
   if (!setup.akten) setup.akten = {};
 
-  const akteKey = discordUser
-    ? `discord_${discordUser.id}`
-    : `roblox_${String(robloxUsername || "Unbekannt").toLowerCase()}`;
+  const safeRoblox = String(robloxUsername || "Unbekannt");
+
+  const akteKey = `roblox_${safeRoblox.toLowerCase()}`;
 
   const savedThreadId = setup.akten[akteKey];
 
@@ -35,18 +42,19 @@ async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, dis
   }
 
   const forum = await interaction.guild.channels.fetch(setup.forumChannelId);
-  const safeName = cleanName(robloxUsername) || "Unbekannt";
+
+  const safeName = cleanName(safeRoblox);
 
   const thread = await forum.threads.create({
     name: `Akte-${safeName}`,
     message: {
       embeds: [
         new EmbedBuilder()
-          .setTitle(`📁 Akte von ${robloxUsername}`)
+          .setTitle(`📁 Akte von ${safeRoblox}`)
           .setDescription(
             discordUser
-              ? `Akte für Roblox-User **${robloxUsername}** / Discord: ${discordUser}`
-              : `Akte für Roblox-User **${robloxUsername}**`
+              ? `Akte für Roblox-User **${safeRoblox}** / Discord: ${discordUser}`
+              : `Akte für Roblox-User **${safeRoblox}**`
           )
           .setColor("Blue")
       ]
@@ -54,7 +62,9 @@ async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, dis
   });
 
   setup.akten[akteKey] = thread.id;
+
   db[interaction.guild.id] = setup;
+
   saveDb(db);
 
   return thread;
@@ -107,6 +117,7 @@ module.exports = {
     }
 
     const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+
     const setup = db[interaction.guild.id];
 
     if (!setup || !setup.typen) {
@@ -135,6 +146,7 @@ module.exports = {
     }
 
     const db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+
     const setup = db[interaction.guild.id];
 
     if (!setup) {
@@ -156,10 +168,11 @@ module.exports = {
     }
 
     const robloxUsername =
-  interaction.options.getString("roblox_username") ||
-  interaction.options.getString("roblox-user") ||
-  interaction.options.getString("roblox") ||
-  "Unbekannt";
+      interaction.options.getString("roblox_username") ||
+      interaction.options.getString("roblox-user") ||
+      interaction.options.getString("roblox") ||
+      "Unbekannt";
+
     const typ = interaction.options.getString("typ");
     const beschreibung = interaction.options.getString("beschreibung");
     const strafe = interaction.options.getString("strafe");
@@ -173,7 +186,9 @@ module.exports = {
 
     if (!finalTyp) {
       return interaction.reply({
-        content: `❌ Diesen Typ gibt es nicht.\nErlaubte Typen: ${allowedTypes.join(", ")}`,
+        content:
+          `❌ Diesen Typ gibt es nicht.\n\n` +
+          `Erlaubte Typen:\n${allowedTypes.join(", ")}`,
         ephemeral: true
       });
     }

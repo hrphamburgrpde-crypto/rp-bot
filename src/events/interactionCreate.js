@@ -24,6 +24,10 @@ function saveDb(db, dbPath) {
   fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 }
 
+function cleanName(name) {
+  return String(name || "Unbekannt").replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+}
+
 function generateCaptcha() {
   return Math.floor(10000 + Math.random() * 90000).toString();
 }
@@ -50,6 +54,7 @@ function buildTopic(data) {
   return [
     `owner=${data.owner}`,
     `type=${data.type}`,
+    `roblox=${data.roblox || "none"}`,
     `notifyChannelId=${data.notifyChannelId || "none"}`,
     `notifyMessageId=${data.notifyMessageId || "none"}`,
     `ticketMessageId=${data.ticketMessageId || "none"}`,
@@ -70,6 +75,7 @@ function parseTopic(topic = "") {
   return {
     owner: data.owner,
     type: data.type || "Notruf",
+    roblox: data.roblox || "none",
     notifyChannelId: data.notifyChannelId || "none",
     notifyMessageId: data.notifyMessageId || "none",
     ticketMessageId: data.ticketMessageId || "none",
@@ -100,7 +106,7 @@ async function hasActiveNotruf(guild, userId, categoryId) {
   );
 }
 
-async function getOrCreateAkteThread(interaction, user) {
+async function getOrCreateAkteThreadByRoblox(interaction, robloxUsername) {
   if (!fs.existsSync(akteDbPath)) return null;
 
   const akteDb = JSON.parse(fs.readFileSync(akteDbPath, "utf8"));
@@ -109,32 +115,31 @@ async function getOrCreateAkteThread(interaction, user) {
   if (!akteSetup) return null;
   if (!akteSetup.akten) akteSetup.akten = {};
 
-  const savedThreadId = akteSetup.akten[user.id];
+  const safeRoblox = String(robloxUsername || "Unbekannt");
+  const akteKey = `roblox_${safeRoblox.toLowerCase()}`;
+  const savedThreadId = akteSetup.akten[akteKey];
 
   if (savedThreadId) {
-    const oldThread = await interaction.guild.channels
-      .fetch(savedThreadId)
-      .catch(() => null);
-
+    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
     if (oldThread) return oldThread;
   }
 
   const forum = await interaction.guild.channels.fetch(akteSetup.forumChannelId);
-  const username = user.username.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
+  const safeName = cleanName(safeRoblox) || "Unbekannt";
 
   const thread = await forum.threads.create({
-    name: `Akte-${username}`,
+    name: `Akte-${safeName}`,
     message: {
       embeds: [
         new EmbedBuilder()
-          .setTitle(`📁 Akte von ${user.username}`)
-          .setDescription(`Gemeinsame Akte für Notrufe und Einträge von ${user}.`)
+          .setTitle(`📁 Akte von ${safeRoblox}`)
+          .setDescription(`Gemeinsame Akte für Notrufe und Einträge von Roblox-User **${safeRoblox}**.`)
           .setColor("Blue")
       ]
     }
   });
 
-  akteSetup.akten[user.id] = thread.id;
+  akteSetup.akten[akteKey] = thread.id;
   akteDb[interaction.guild.id] = akteSetup;
   saveDb(akteDb, akteDbPath);
 
@@ -158,7 +163,7 @@ async function updateDutyPanel(guild, setup) {
 
   const embed = new EmbedBuilder()
     .setTitle("🟢 Dienst-System")
-    .setDescription(`Aktuell eingecheckte Personen:\n\n${description}`)
+    .setDescription(`Aktuell im Dienst:\n\n${description}`)
     .setColor("Green");
 
   await message.edit({ embeds: [embed] }).catch(() => {});
@@ -194,15 +199,18 @@ module.exports = {
         return command.execute(interaction);
       }
 
+      // VERIFY BUTTON
       if (interaction.isButton() && interaction.customId === "verify_start") {
-        if (!fs.existsSync(verifyDbPath)) return;
+        if (!fs.existsSync(verifyDbPath)) {
+          fs.writeFileSync(verifyDbPath, JSON.stringify({}, null, 2));
+        }
 
         const verifyDb = JSON.parse(fs.readFileSync(verifyDbPath, "utf8"));
         const verifySetup = verifyDb[interaction.guild.id];
 
         if (!verifySetup) {
           return interaction.reply({
-            content: "❌ Verify-System wurde nicht eingerichtet.",
+            content: "❌ Verify-System wurde nicht eingerichtet. Bitte führe `/setup-verify` neu aus.",
             ephemeral: true
           });
         }
@@ -231,7 +239,7 @@ module.exports = {
               new TextInputBuilder()
                 .setCustomId("captcha")
                 .setLabel(`Captcha: ${captchaCode}`)
-                .setPlaceholder("Gib den Code ein")
+                .setPlaceholder("Captcha eingeben")
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true)
             )
@@ -244,7 +252,7 @@ module.exports = {
               new TextInputBuilder()
                 .setCustomId("roblox_username")
                 .setLabel("Roblox Username")
-                .setPlaceholder("Dein Roblox Name")
+                .setPlaceholder("Dein Roblox Username")
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true)
             )
@@ -254,6 +262,7 @@ module.exports = {
         return interaction.showModal(modal);
       }
 
+      // VERIFY MODAL
       if (interaction.isModalSubmit() && interaction.customId.startsWith("verify_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -297,13 +306,15 @@ module.exports = {
             .getTextInputValue("roblox_username")
             .slice(0, 32);
 
-          if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames)) {
-            robloxText = "\n⚠️ Nickname konnte nicht geändert werden: Bot hat keine Manage-Nicknames-Rechte.";
-          } else if (!member.manageable || member.id === interaction.guild.ownerId) {
-            robloxText = "\n⚠️ Nickname konnte nicht geändert werden: User ist Server-Owner oder Bot-Rolle ist zu niedrig.";
-          } else {
+          if (
+            botMember.permissions.has(PermissionFlagsBits.ManageNicknames) &&
+            member.manageable &&
+            member.id !== interaction.guild.ownerId
+          ) {
             await member.setNickname(robloxUsername, "Verify Roblox Username").catch(() => {});
             robloxText = `\nRoblox Username / Nickname: **${robloxUsername}**`;
+          } else {
+            robloxText = "\n⚠️ Nickname konnte nicht geändert werden.";
           }
         }
 
@@ -312,18 +323,21 @@ module.exports = {
         });
       }
 
+      // DUTY SYSTEM
       if (
         interaction.isButton() &&
         ["duty_checkin", "duty_checkout"].includes(interaction.customId)
       ) {
-        if (!fs.existsSync(dutyDbPath)) return;
+        if (!fs.existsSync(dutyDbPath)) {
+          fs.writeFileSync(dutyDbPath, JSON.stringify({}, null, 2));
+        }
 
         const dutyDb = JSON.parse(fs.readFileSync(dutyDbPath, "utf8"));
         const dutySetup = dutyDb[interaction.guild.id];
 
         if (!dutySetup) {
           return interaction.reply({
-            content: "❌ Dienst-System wurde nicht eingerichtet.",
+            content: "❌ Duty-System wurde nicht eingerichtet.",
             ephemeral: true
           });
         }
@@ -336,7 +350,7 @@ module.exports = {
         if (interaction.customId === "duty_checkin") {
           if (dutySetup.activeUsers[interaction.user.id]) {
             return interaction.reply({
-              content: "❌ Du bist bereits eingecheckt.",
+              content: "❌ Du bist bereits im Dienst.",
               ephemeral: true
             });
           }
@@ -357,13 +371,9 @@ module.exports = {
             interaction.guild,
             dutySetup,
             new EmbedBuilder()
-              .setTitle("🟢 Dienst betreten")
-              .setDescription(`${interaction.user} hat sich eingecheckt.`)
-              .addFields({
-                name: "Zeitpunkt",
-                value: `<t:${now}:F>`,
-                inline: false
-              })
+              .setTitle("🟢 Eingecheckt")
+              .setDescription(`${interaction.user} ist jetzt im Dienst.`)
+              .addFields({ name: "Zeitpunkt", value: `<t:${now}:F>`, inline: false })
               .setColor("Green")
           );
 
@@ -376,7 +386,7 @@ module.exports = {
         if (interaction.customId === "duty_checkout") {
           if (!dutySetup.activeUsers[interaction.user.id]) {
             return interaction.reply({
-              content: "❌ Du bist aktuell nicht eingecheckt.",
+              content: "❌ Du bist aktuell nicht im Dienst.",
               ephemeral: true
             });
           }
@@ -400,19 +410,11 @@ module.exports = {
             interaction.guild,
             dutySetup,
             new EmbedBuilder()
-              .setTitle("🔴 Dienst verlassen")
-              .setDescription(`${interaction.user} hat sich ausgecheckt.`)
+              .setTitle("🔴 Ausgecheckt")
+              .setDescription(`${interaction.user} ist jetzt außer Dienst.`)
               .addFields(
-                {
-                  name: "Eingecheckt seit",
-                  value: `<t:${since}:F>`,
-                  inline: false
-                },
-                {
-                  name: "Ausgecheckt um",
-                  value: `<t:${now}:F>`,
-                  inline: false
-                }
+                { name: "Eingecheckt seit", value: `<t:${since}:F>`, inline: false },
+                { name: "Ausgecheckt um", value: `<t:${now}:F>`, inline: false }
               )
               .setColor("Red")
           );
@@ -424,6 +426,7 @@ module.exports = {
         }
       }
 
+      // NOTRUF PRIORITY SELECT
       if (interaction.isStringSelectMenu()) {
         if (!interaction.customId.startsWith("notruf_priority_")) return;
 
@@ -445,6 +448,13 @@ module.exports = {
           .setCustomId(`notruf_modal_${buttonIndex}_${priority}`)
           .setTitle(`${buttonText}-Notruf`);
 
+        const robloxInput = new TextInputBuilder()
+          .setCustomId("notruf_roblox")
+          .setLabel("Roblox Username")
+          .setPlaceholder("Exakter Roblox Username - Groß/Kleinschreibung wichtig")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
         const woInput = new TextInputBuilder()
           .setCustomId("notruf_wo")
           .setLabel("Wo?")
@@ -464,6 +474,7 @@ module.exports = {
           .setRequired(false);
 
         modal.addComponents(
+          new ActionRowBuilder().addComponents(robloxInput),
           new ActionRowBuilder().addComponents(woInput),
           new ActionRowBuilder().addComponents(warumInput),
           new ActionRowBuilder().addComponents(infoInput)
@@ -472,6 +483,7 @@ module.exports = {
         return interaction.showModal(modal);
       }
 
+      // NOTRUF SYSTEM
       if (!fs.existsSync(notrufDbPath)) return;
 
       const db = JSON.parse(fs.readFileSync(notrufDbPath, "utf8"));
@@ -480,8 +492,6 @@ module.exports = {
       if (!setup) return;
 
       if (interaction.isButton() && interaction.customId.startsWith("notruf_create_")) {
-        if (interaction.replied || interaction.deferred) return;
-
         const buttonIndex = Number(interaction.customId.replace("notruf_create_", ""));
 
         const activeNotruf = await hasActiveNotruf(
@@ -522,10 +532,7 @@ module.exports = {
         });
       }
 
-      if (
-        interaction.isModalSubmit() &&
-        interaction.customId.startsWith("notruf_modal_")
-      ) {
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("notruf_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
         const parts = interaction.customId.replace("notruf_modal_", "").split("_");
@@ -545,6 +552,7 @@ module.exports = {
           });
         }
 
+        const robloxUsername = interaction.fields.getTextInputValue("notruf_roblox");
         const wo = interaction.fields.getTextInputValue("notruf_wo");
         const warum = interaction.fields.getTextInputValue("notruf_warum");
         const infos =
@@ -588,6 +596,7 @@ module.exports = {
           .setColor("Red")
           .addFields(
             { name: "Ersteller", value: `${interaction.user}`, inline: true },
+            { name: "Roblox Username", value: robloxUsername, inline: true },
             { name: "Status", value: "Offen", inline: true },
             { name: "📍 Wo?", value: wo, inline: false },
             { name: "📞 Warum rufen Sie an?", value: warum, inline: false },
@@ -608,6 +617,7 @@ module.exports = {
           .setColor("Red")
           .addFields(
             { name: "Ersteller", value: `${interaction.user}`, inline: true },
+            { name: "Roblox Username", value: robloxUsername, inline: true },
             { name: "Status", value: "Nicht ausgerückt", inline: true },
             { name: "Notruf Kanal", value: `${channel}`, inline: true },
             { name: "📍 Wo?", value: wo, inline: false },
@@ -625,14 +635,15 @@ module.exports = {
         let akteThread = null;
         let akteMessage = null;
 
-        akteThread = await getOrCreateAkteThread(interaction, interaction.user);
+        akteThread = await getOrCreateAkteThreadByRoblox(interaction, robloxUsername);
 
         if (akteThread) {
           const akteEmbed = new EmbedBuilder()
             .setTitle(`📄 Neuer Notruf: ${buttonText}`)
             .setColor("Red")
             .addFields(
-              { name: "Person", value: `${interaction.user}`, inline: true },
+              { name: "Roblox Username", value: robloxUsername, inline: true },
+              { name: "Discord User", value: `${interaction.user}`, inline: true },
               { name: "Status", value: "Nicht ausgerückt", inline: true },
               { name: "Notruf Kanal", value: `${channel}`, inline: true },
               { name: "Zeitpunkt", value: `<t:${timestamp}:F>`, inline: false },
@@ -643,15 +654,14 @@ module.exports = {
               { name: "🚓 Ausgerückt von", value: "Noch niemand", inline: false }
             );
 
-          akteMessage = await akteThread.send({
-            embeds: [akteEmbed]
-          });
+          akteMessage = await akteThread.send({ embeds: [akteEmbed] });
         }
 
         await channel.setTopic(
           buildTopic({
             owner: interaction.user.id,
             type: buttonText,
+            roblox: robloxUsername,
             notifyChannelId: notifyChannel.id,
             notifyMessageId: notifyMessage.id,
             ticketMessageId: ticketMessage.id,
@@ -694,8 +704,7 @@ module.exports = {
         const topicData = parseTopic(ticketChannel.topic);
         const timestamp = Math.floor(Date.now() / 1000);
 
-        const notifyEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor("Green");
+        const notifyEmbed = EmbedBuilder.from(interaction.message.embeds[0]).setColor("Green");
 
         setStatusField(
           notifyEmbed,
@@ -752,9 +761,7 @@ module.exports = {
                 inline: false
               });
 
-              await akteMessage.edit({
-                embeds: [akteEmbed]
-              });
+              await akteMessage.edit({ embeds: [akteEmbed] });
             }
           }
         }

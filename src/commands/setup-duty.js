@@ -11,45 +11,33 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const dbPath = path.join(__dirname, "dutySetups.json");
+const dbPath = path.join(__dirname, "../database/dutySetups.json");
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("setup-duty")
     .setDescription("Erstellt ein Dienst-System")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator |
-      PermissionFlagsBits.KickMembers |
-      PermissionFlagsBits.BanMembers
-    )
-
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addChannelOption(option =>
-      option
-        .setName("kanal")
-        .setDescription("Kanal für das Dienst-Panel")
+      option.setName("kanal")
+        .setDescription("Kanal für das Duty-Panel")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-
     .addRoleOption(option =>
-      option
-        .setName("on_dutyrolle")
-        .setDescription("Rolle, die beim Einchecken gegeben wird")
+      option.setName("on_dutyrolle")
+        .setDescription("Rolle beim Einchecken")
         .setRequired(true)
     )
-
     .addChannelOption(option =>
-      option
-        .setName("logkanal")
-        .setDescription("Kanal für Dienst-Logs")
+      option.setName("logkanal")
+        .setDescription("Log-Kanal")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true)
     )
-
     .addRoleOption(option =>
-      option
-        .setName("off_dutyrolle")
-        .setDescription("Rolle, die beim Auschecken gegeben wird")
+      option.setName("off_dutyrolle")
+        .setDescription("Rolle beim Auschecken")
         .setRequired(false)
     ),
 
@@ -61,7 +49,7 @@ module.exports = {
 
     const embed = new EmbedBuilder()
       .setTitle("🟢 Dienst-System")
-      .setDescription("Aktuell eingecheckte Personen:\n\nKeine Personen im Dienst.")
+      .setDescription("Aktuell im Dienst:\n\nKeine Personen im Dienst.")
       .setColor("Green");
 
     const row = new ActionRowBuilder().addComponents(
@@ -98,7 +86,7 @@ module.exports = {
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
     return interaction.reply({
-      content: "✅ Dienst-System wurde eingerichtet.",
+      content: "✅ Duty-System wurde eingerichtet.",
       ephemeral: true
     });
   }
