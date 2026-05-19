@@ -1,15 +1,14 @@
 {
   "name": "rp-notruf-bot",
   "version": "1.0.0",
-  "description": "RP Notruf & Verify Bot",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "deploy": "node scripts/deploy-commands.js"
   },
   "dependencies": {
-    "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5",
-    "mongoose": "^9.6.2"
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.6.1",
+    "mongoose": "^8.15.1"
   }
 }
