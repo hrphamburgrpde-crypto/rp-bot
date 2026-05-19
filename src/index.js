@@ -3,12 +3,8 @@ require("dotenv").config();
 const {
   Client,
   Collection,
-  GatewayIntentBits,
-  EmbedBuilder
+  GatewayIntentBits
 } = require("discord.js");
-
-const fs = require("fs");
-const path = require("path");
 
 const client = new Client({
   intents: [
@@ -29,8 +25,13 @@ const commandFiles = [
 ];
 
 for (const file of commandFiles) {
-  const command = require(file);
-  client.commands.set(command.data.name, command);
+  try {
+    const command = require(file);
+    client.commands.set(command.data.name, command);
+    console.log(`✅ Command geladen: ${command.data.name}`);
+  } catch (err) {
+    console.error(`❌ Fehler beim Laden von ${file}:`, err);
+  }
 }
 
 const event = require("./events/interactionCreate.js");

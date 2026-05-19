@@ -112,10 +112,7 @@ async function getOrCreateAkteThread(interaction, user) {
   const savedThreadId = akteSetup.akten[user.id];
 
   if (savedThreadId) {
-    const oldThread = await interaction.guild.channels
-      .fetch(savedThreadId)
-      .catch(() => null);
-
+    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
     if (oldThread) return oldThread;
   }
 
@@ -136,7 +133,6 @@ async function getOrCreateAkteThread(interaction, user) {
 
   akteSetup.akten[user.id] = thread.id;
   akteDb[interaction.guild.id] = akteSetup;
-
   saveDb(akteDb, akteDbPath);
 
   return thread;
@@ -152,9 +148,7 @@ async function updateDutyPanel(guild, setup) {
   const users = Object.entries(setup.activeUsers || {});
 
   const description = users.length
-    ? users
-        .map(([userId, data], index) => `${index + 1}. <@${userId}> — seit <t:${data.since}:R>`)
-        .join("\n")
+    ? users.map(([userId, data], index) => `${index + 1}. <@${userId}> — seit <t:${data.since}:R>`).join("\n")
     : "Keine Personen im Dienst.";
 
   const embed = new EmbedBuilder()
@@ -177,17 +171,21 @@ module.exports = {
 
   async execute(interaction) {
     try {
+      console.log(
+        "INTERACTION:",
+        interaction.type,
+        interaction.commandName || interaction.customId || "unknown"
+      );
+
       if (interaction.isAutocomplete()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command || !command.autocomplete) return;
-
         return command.autocomplete(interaction);
       }
 
       if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) return;
-
         return command.execute(interaction);
       }
 
@@ -421,17 +419,9 @@ module.exports = {
         }
       }
 
-      if (
-        interaction.isStringSelectMenu() &&
-        !interaction.customId.startsWith("notruf_priority_")
-      ) {
-        return;
-      }
+      if (interaction.isStringSelectMenu()) {
+        if (!interaction.customId.startsWith("notruf_priority_")) return;
 
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId.startsWith("notruf_priority_")
-      ) {
         const buttonIndex = Number(interaction.customId.replace("notruf_priority_", ""));
         const priority = interaction.values[0];
 
@@ -485,7 +475,8 @@ module.exports = {
       if (!setup) return;
 
       if (interaction.isButton() && interaction.customId.startsWith("notruf_create_")) {
-  if (interaction.replied || interaction.deferred) return;
+        if (interaction.replied || interaction.deferred) return;
+
         const buttonIndex = Number(interaction.customId.replace("notruf_create_", ""));
 
         const activeNotruf = await hasActiveNotruf(
@@ -535,7 +526,7 @@ module.exports = {
         const parts = interaction.customId.replace("notruf_modal_", "").split("_");
         const buttonIndex = Number(parts[0]);
         const priority = parts.slice(1).join("_");
-        const buttonText = setup.buttons[buttonIndex];
+        const buttonText = setup.buttons[buttonIndex] || "Notruf";
 
         const activeNotruf = await hasActiveNotruf(
           interaction.guild,
@@ -563,7 +554,6 @@ module.exports = {
           type: ChannelType.GuildText,
           parent: setup.categoryId,
           topic: "loading",
-
           permissionOverwrites: [
             {
               id: interaction.guild.id,
@@ -726,18 +716,13 @@ module.exports = {
         );
 
         if (topicData.akteThreadId !== "none" && topicData.akteMessageId !== "none") {
-          const akteThread = await interaction.guild.channels
-            .fetch(topicData.akteThreadId)
-            .catch(() => null);
+          const akteThread = await interaction.guild.channels.fetch(topicData.akteThreadId).catch(() => null);
 
           if (akteThread) {
-            const akteMessage = await akteThread.messages
-              .fetch(topicData.akteMessageId)
-              .catch(() => null);
+            const akteMessage = await akteThread.messages.fetch(topicData.akteMessageId).catch(() => null);
 
             if (akteMessage) {
-              const akteEmbed = EmbedBuilder.from(akteMessage.embeds[0])
-                .setColor("Green");
+              const akteEmbed = EmbedBuilder.from(akteMessage.embeds[0]).setColor("Green");
 
               setStatusField(akteEmbed, "Einsatzkräfte unterwegs");
 
