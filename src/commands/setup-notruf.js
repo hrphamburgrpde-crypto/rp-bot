@@ -41,7 +41,7 @@ module.exports = {
     .addRoleOption(option =>
       option
         .setName("einsatz-rolle")
-        .setDescription("Rolle, die Benachrichtigungen sieht und Ausrücken darf")
+        .setDescription("Rolle, die Ausrücken darf")
         .setRequired(true)
     )
 
@@ -64,7 +64,7 @@ module.exports = {
     .addStringOption(option =>
       option
         .setName("buttons")
-        .setDescription("Buttons getrennt mit Komma, z.B. 110,112,Mechaniker")
+        .setDescription("Buttons getrennt mit Komma, z.B. 110,112")
         .setRequired(true)
     ),
 
@@ -77,24 +77,8 @@ module.exports = {
     const buttonsInput = interaction.options.getString("buttons");
 
     const buttons = [...new Set(
-      buttonsInput
-        .split(",")
-        .map(button => button.trim())
-        .filter(Boolean)
+      buttonsInput.split(",").map(b => b.trim()).filter(Boolean)
     )].slice(0, 5);
-
-    if (!buttons.length) {
-      return interaction.reply({
-        content: "❌ Bitte gib mindestens einen Button an.",
-        ephemeral: true
-      });
-    }
-
-    await notifyChannel.permissionOverwrites.edit(einsatzRole.id, {
-      ViewChannel: true,
-      SendMessages: false,
-      ReadMessageHistory: true
-    }).catch(() => {});
 
     const embed = new EmbedBuilder()
       .setTitle("📞 Notruf-System")
@@ -118,16 +102,15 @@ module.exports = {
     });
 
     let db = {};
-
     if (fs.existsSync(dbPath)) {
       db = JSON.parse(fs.readFileSync(dbPath, "utf8"));
     }
 
     db[interaction.guild.id] = {
       channelId: kanal.id,
-      roleId: leitstellenRole.id,
       leitstellenRoleId: leitstellenRole.id,
       einsatzRoleId: einsatzRole.id,
+      roleId: leitstellenRole.id,
       pingRoleId: einsatzRole.id,
       categoryId: kategorie.id,
       notifyChannelId: notifyChannel.id,
@@ -138,11 +121,7 @@ module.exports = {
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
     return interaction.reply({
-      content:
-        `✅ Notruf-System wurde eingerichtet.\n` +
-        `Leitstelle: ${leitstellenRole}\n` +
-        `Einsatz-Berechtigt: ${einsatzRole}\n` +
-        `Benachrichtigungs-Kanal: ${notifyChannel}`,
+      content: "✅ Notruf-System wurde eingerichtet.",
       ephemeral: true
     });
   }

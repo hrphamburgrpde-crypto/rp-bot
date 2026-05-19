@@ -17,14 +17,20 @@ function cleanName(name) {
   return name.replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
 }
 
-async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, discordUser = null) {
+async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, discordUser) {
   if (!setup.akten) setup.akten = {};
 
-  const akteKey = discordUser ? `discord_${discordUser.id}` : `roblox_${robloxUsername.toLowerCase()}`;
+  const akteKey = discordUser
+    ? `discord_${discordUser.id}`
+    : `roblox_${String(robloxUsername || "Unbekannt").toLowerCase()}`;
+
   const savedThreadId = setup.akten[akteKey];
 
   if (savedThreadId) {
-    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
+    const oldThread = await interaction.guild.channels
+      .fetch(savedThreadId)
+      .catch(() => null);
+
     if (oldThread) return oldThread;
   }
 
@@ -39,8 +45,8 @@ async function getOrCreateAkteThread(interaction, db, setup, robloxUsername, dis
           .setTitle(`📁 Akte von ${robloxUsername}`)
           .setDescription(
             discordUser
-              ? `Gemeinsame Akte für Roblox-User **${robloxUsername}** / Discord: ${discordUser}.`
-              : `Gemeinsame Akte für Roblox-User **${robloxUsername}**.`
+              ? `Akte für Roblox-User **${robloxUsername}** / Discord: ${discordUser}`
+              : `Akte für Roblox-User **${robloxUsername}**`
           )
           .setColor("Blue")
       ]
@@ -149,28 +155,28 @@ module.exports = {
       });
     }
 
-    const robloxUsername = interaction.options.getString("roblox_username");
-    const discordUser = interaction.options.getUser("discord_user");
+    const robloxUsername =
+  interaction.options.getString("roblox_username") ||
+  interaction.options.getString("roblox-user") ||
+  interaction.options.getString("roblox") ||
+  "Unbekannt";
     const typ = interaction.options.getString("typ");
     const beschreibung = interaction.options.getString("beschreibung");
     const strafe = interaction.options.getString("strafe");
+    const discordUser = interaction.options.getUser("discord_user");
 
     const allowedTypes = setup.typen || [];
 
-    const typeExists = allowedTypes.some(
+    const finalTyp = allowedTypes.find(
       type => type.toLowerCase() === typ.toLowerCase()
     );
 
-    if (!typeExists) {
+    if (!finalTyp) {
       return interaction.reply({
         content: `❌ Diesen Typ gibt es nicht.\nErlaubte Typen: ${allowedTypes.join(", ")}`,
         ephemeral: true
       });
     }
-
-    const finalTyp = allowedTypes.find(
-      type => type.toLowerCase() === typ.toLowerCase()
-    );
 
     const timestamp = Math.floor(Date.now() / 1000);
 
