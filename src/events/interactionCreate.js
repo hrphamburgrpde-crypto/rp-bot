@@ -12,17 +12,7 @@ const {
   StringSelectMenuOptionBuilder
 } = require("discord.js");
 
-const fs = require("fs");
-const path = require("path");
-
-const notrufDbPath = path.join(__dirname, "../database/notrufSetups.json");
-const verifyDbPath = path.join(__dirname, "../database/verifySetups.json");
-const akteDbPath = path.join(__dirname, "../database/akteSetups.json");
-const dutyDbPath = path.join(__dirname, "../database/dutySetups.json");
-
-function saveDb(db, dbPath) {
-  fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-}
+const GuildSetup = require("../models/GuildSetup");
 
 function cleanName(name) {
   return String(name || "Unbekannt").replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
@@ -41,10 +31,10 @@ function getTicketButtons() {
   );
 }
 
-function getNotifyButton(ticketChannelId) {
+function getNotifyButton(channelId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`notruf_notify_ausruecken_${ticketChannelId}`)
+      .setCustomId(`notruf_notify_ausruecken_${channelId}`)
       .setLabel("Ausrücken")
       .setStyle(ButtonStyle.Primary)
   );
@@ -66,23 +56,11 @@ function buildTopic(data) {
 
 function parseTopic(topic = "") {
   const data = {};
-
   topic.split(";").forEach(part => {
     const [key, value] = part.split("=");
     if (key && value) data[key] = value;
   });
-
-  return {
-    owner: data.owner,
-    type: data.type || "Notruf",
-    roblox: data.roblox || "none",
-    notifyChannelId: data.notifyChannelId || "none",
-    notifyMessageId: data.notifyMessageId || "none",
-    ticketMessageId: data.ticketMessageId || "none",
-    akteThreadId: data.akteThreadId || "none",
-    akteMessageId: data.akteMessageId || "none",
-    dispatched: data.dispatched || "false"
-  };
+  return data;
 }
 
 function setStatusField(embed, value) {
@@ -106,71 +84,66 @@ async function hasActiveNotruf(guild, userId, categoryId) {
   );
 }
 
-async function getOrCreateAkteThreadByRoblox(interaction, robloxUsername) {
-  if (!fs.existsSync(akteDbPath)) return null;
+async function getOrCreateAkteThreadByRoblox(interaction, setup, robloxUsername) {
+  if (!setup.akte) return null;
 
-  const akteDb = JSON.parse(fs.readFileSync(akteDbPath, "utf8"));
-  const akteSetup = akteDb[interaction.guild.id];
-
-  if (!akteSetup) return null;
-  if (!akteSetup.akten) akteSetup.akten = {};
+  if (!setup.akte.akten) setup.akte.akten = {};
 
   const safeRoblox = String(robloxUsername || "Unbekannt");
   const akteKey = `roblox_${safeRoblox.toLowerCase()}`;
-  const savedThreadId = akteSetup.akten[akteKey];
+
+  const savedThreadId = setup.akte.akten[akteKey];
 
   if (savedThreadId) {
     const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
     if (oldThread) return oldThread;
   }
 
-  const forum = await interaction.guild.channels.fetch(akteSetup.forumChannelId);
-  const safeName = cleanName(safeRoblox) || "Unbekannt";
+  const forum = await interaction.guild.channels.fetch(setup.akte.forumChannelId).catch(() => null);
+  if (!forum) return null;
 
   const thread = await forum.threads.create({
-    name: `Akte-${safeName}`,
+    name: `Akte-${cleanName(safeRoblox)}`,
     message: {
       embeds: [
         new EmbedBuilder()
           .setTitle(`📁 Akte von ${safeRoblox}`)
-          .setDescription(`Gemeinsame Akte für Notrufe und Einträge von Roblox-User **${safeRoblox}**.`)
+          .setDescription(`Gemeinsame Akte für Roblox-User **${safeRoblox}**.`)
           .setColor("Blue")
       ]
     }
   });
 
-  akteSetup.akten[akteKey] = thread.id;
-  akteDb[interaction.guild.id] = akteSetup;
-  saveDb(akteDb, akteDbPath);
+  setup.akte.akten[akteKey] = thread.id;
+  setup.markModified("akte");
+  await setup.save();
 
   return thread;
 }
 
-async function updateDutyPanel(guild, setup) {
-  const channel = await guild.channels.fetch(setup.channelId).catch(() => null);
+async function updateDutyPanel(guild, dutySetup) {
+  const channel = await guild.channels.fetch(dutySetup.channelId).catch(() => null);
   if (!channel) return;
 
-  const message = await channel.messages.fetch(setup.messageId).catch(() => null);
+  const message = await channel.messages.fetch(dutySetup.messageId).catch(() => null);
   if (!message) return;
 
-  const users = Object.entries(setup.activeUsers || {});
+  const users = Object.entries(dutySetup.activeUsers || {});
 
-  const description = users.length
-    ? users
-        .map(([userId, data], index) => `${index + 1}. <@${userId}> — seit <t:${data.since}:R>`)
-        .join("\n")
+  const text = users.length
+    ? users.map(([id, data], index) => `${index + 1}. <@${id}> — seit <t:${data.since}:R>`).join("\n")
     : "Keine Personen im Dienst.";
 
   const embed = new EmbedBuilder()
     .setTitle("🟢 Dienst-System")
-    .setDescription(`Aktuell im Dienst:\n\n${description}`)
+    .setDescription(`Aktuell im Dienst:\n\n${text}`)
     .setColor("Green");
 
   await message.edit({ embeds: [embed] }).catch(() => {});
 }
 
-async function sendDutyLog(guild, setup, embed) {
-  const logChannel = await guild.channels.fetch(setup.logChannelId).catch(() => null);
+async function sendDutyLog(guild, dutySetup, embed) {
+  const logChannel = await guild.channels.fetch(dutySetup.logChannelId).catch(() => null);
   if (!logChannel) return;
 
   await logChannel.send({ embeds: [embed] }).catch(() => {});
@@ -199,14 +172,10 @@ module.exports = {
         return command.execute(interaction);
       }
 
-      // VERIFY BUTTON
-      if (interaction.isButton() && interaction.customId === "verify_start") {
-        if (!fs.existsSync(verifyDbPath)) {
-          fs.writeFileSync(verifyDbPath, JSON.stringify({}, null, 2));
-        }
+      const setup = await GuildSetup.findOne({ guildId: interaction.guild.id });
 
-        const verifyDb = JSON.parse(fs.readFileSync(verifyDbPath, "utf8"));
-        const verifySetup = verifyDb[interaction.guild.id];
+      if (interaction.isButton() && interaction.customId === "verify_start") {
+        const verifySetup = setup?.verify;
 
         if (!verifySetup) {
           return interaction.reply({
@@ -262,18 +231,10 @@ module.exports = {
         return interaction.showModal(modal);
       }
 
-      // VERIFY MODAL
       if (interaction.isModalSubmit() && interaction.customId.startsWith("verify_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
-        if (!fs.existsSync(verifyDbPath)) {
-          return interaction.editReply({
-            content: "❌ Verify-System wurde nicht eingerichtet."
-          });
-        }
-
-        const verifyDb = JSON.parse(fs.readFileSync(verifyDbPath, "utf8"));
-        const verifySetup = verifyDb[interaction.guild.id];
+        const verifySetup = setup?.verify;
 
         if (!verifySetup) {
           return interaction.editReply({
@@ -302,9 +263,7 @@ module.exports = {
         let robloxText = "";
 
         if (verifySetup.robloxUsernameEnabled) {
-          const robloxUsername = interaction.fields
-            .getTextInputValue("roblox_username")
-            .slice(0, 32);
+          const robloxUsername = interaction.fields.getTextInputValue("roblox_username").slice(0, 32);
 
           if (
             botMember.permissions.has(PermissionFlagsBits.ManageNicknames) &&
@@ -323,17 +282,11 @@ module.exports = {
         });
       }
 
-      // DUTY SYSTEM
       if (
         interaction.isButton() &&
         ["duty_checkin", "duty_checkout"].includes(interaction.customId)
       ) {
-        if (!fs.existsSync(dutyDbPath)) {
-          fs.writeFileSync(dutyDbPath, JSON.stringify({}, null, 2));
-        }
-
-        const dutyDb = JSON.parse(fs.readFileSync(dutyDbPath, "utf8"));
-        const dutySetup = dutyDb[interaction.guild.id];
+        const dutySetup = setup?.duty;
 
         if (!dutySetup) {
           return interaction.reply({
@@ -342,10 +295,10 @@ module.exports = {
           });
         }
 
+        if (!dutySetup.activeUsers) dutySetup.activeUsers = {};
+
         const member = await interaction.guild.members.fetch(interaction.user.id);
         const now = Math.floor(Date.now() / 1000);
-
-        if (!dutySetup.activeUsers) dutySetup.activeUsers = {};
 
         if (interaction.customId === "duty_checkin") {
           if (dutySetup.activeUsers[interaction.user.id]) {
@@ -362,8 +315,10 @@ module.exports = {
           }
 
           dutySetup.activeUsers[interaction.user.id] = { since: now };
-          dutyDb[interaction.guild.id] = dutySetup;
-          saveDb(dutyDb, dutyDbPath);
+
+          setup.duty = dutySetup;
+          setup.markModified("duty");
+          await setup.save();
 
           await updateDutyPanel(interaction.guild, dutySetup);
 
@@ -401,8 +356,9 @@ module.exports = {
 
           delete dutySetup.activeUsers[interaction.user.id];
 
-          dutyDb[interaction.guild.id] = dutySetup;
-          saveDb(dutyDb, dutyDbPath);
+          setup.duty = dutySetup;
+          setup.markModified("duty");
+          await setup.save();
 
           await updateDutyPanel(interaction.guild, dutySetup);
 
@@ -426,23 +382,21 @@ module.exports = {
         }
       }
 
-      // NOTRUF PRIORITY SELECT
       if (interaction.isStringSelectMenu()) {
         if (!interaction.customId.startsWith("notruf_priority_")) return;
 
+        const notrufSetup = setup?.notruf;
+
+        if (!notrufSetup) {
+          return interaction.reply({
+            content: "❌ Notruf-System wurde nicht eingerichtet.",
+            ephemeral: true
+          });
+        }
+
         const buttonIndex = Number(interaction.customId.replace("notruf_priority_", ""));
         const priority = interaction.values[0];
-
-        let buttonText = "Notruf";
-
-        if (fs.existsSync(notrufDbPath)) {
-          const db = JSON.parse(fs.readFileSync(notrufDbPath, "utf8"));
-          const setup = db[interaction.guild.id];
-
-          if (setup && setup.buttons && setup.buttons[buttonIndex]) {
-            buttonText = setup.buttons[buttonIndex];
-          }
-        }
+        const buttonText = notrufSetup.buttons[buttonIndex] || "Notruf";
 
         const modal = new ModalBuilder()
           .setCustomId(`notruf_modal_${buttonIndex}_${priority}`)
@@ -483,21 +437,22 @@ module.exports = {
         return interaction.showModal(modal);
       }
 
-      // NOTRUF SYSTEM
-      if (!fs.existsSync(notrufDbPath)) return;
-
-      const db = JSON.parse(fs.readFileSync(notrufDbPath, "utf8"));
-      const setup = db[interaction.guild.id];
-
-      if (!setup) return;
-
       if (interaction.isButton() && interaction.customId.startsWith("notruf_create_")) {
+        const notrufSetup = setup?.notruf;
+
+        if (!notrufSetup) {
+          return interaction.reply({
+            content: "❌ Notruf-System wurde nicht eingerichtet.",
+            ephemeral: true
+          });
+        }
+
         const buttonIndex = Number(interaction.customId.replace("notruf_create_", ""));
 
         const activeNotruf = await hasActiveNotruf(
           interaction.guild,
           interaction.user.id,
-          setup.categoryId
+          notrufSetup.categoryId
         );
 
         if (activeNotruf) {
@@ -535,15 +490,23 @@ module.exports = {
       if (interaction.isModalSubmit() && interaction.customId.startsWith("notruf_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
+        const notrufSetup = setup?.notruf;
+
+        if (!notrufSetup) {
+          return interaction.editReply({
+            content: "❌ Notruf-System wurde nicht eingerichtet."
+          });
+        }
+
         const parts = interaction.customId.replace("notruf_modal_", "").split("_");
         const buttonIndex = Number(parts[0]);
         const priority = parts.slice(1).join("_");
-        const buttonText = setup.buttons[buttonIndex] || "Notruf";
+        const buttonText = notrufSetup.buttons[buttonIndex] || "Notruf";
 
         const activeNotruf = await hasActiveNotruf(
           interaction.guild,
           interaction.user.id,
-          setup.categoryId
+          notrufSetup.categoryId
         );
 
         if (activeNotruf) {
@@ -565,7 +528,7 @@ module.exports = {
         const channel = await interaction.guild.channels.create({
           name: `${buttonText}-notruf-${randomId}`,
           type: ChannelType.GuildText,
-          parent: setup.categoryId,
+          parent: notrufSetup.categoryId,
           topic: "loading",
           permissionOverwrites: [
             {
@@ -581,7 +544,7 @@ module.exports = {
               ]
             },
             {
-              id: setup.leitstellenRoleId || setup.roleId,
+              id: notrufSetup.leitstellenRoleId || notrufSetup.roleId,
               allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,
@@ -605,12 +568,12 @@ module.exports = {
           );
 
         const ticketMessage = await channel.send({
-          content: `<@&${setup.leitstellenRoleId || setup.roleId}> ${interaction.user}`,
+          content: `<@&${notrufSetup.leitstellenRoleId || notrufSetup.roleId}> ${interaction.user}`,
           embeds: [ticketEmbed],
           components: [getTicketButtons()]
         });
 
-        const notifyChannel = await interaction.guild.channels.fetch(setup.notifyChannelId);
+        const notifyChannel = await interaction.guild.channels.fetch(notrufSetup.notifyChannelId);
 
         const notifyEmbed = new EmbedBuilder()
           .setTitle(`🚨 Neuer ${buttonText}-Notruf`)
@@ -627,7 +590,7 @@ module.exports = {
           );
 
         const notifyMessage = await notifyChannel.send({
-          content: `<@&${setup.einsatzRoleId || setup.pingRoleId}>`,
+          content: `<@&${notrufSetup.einsatzRoleId || notrufSetup.pingRoleId}>`,
           embeds: [notifyEmbed],
           components: [getNotifyButton(channel.id)]
         });
@@ -635,7 +598,7 @@ module.exports = {
         let akteThread = null;
         let akteMessage = null;
 
-        akteThread = await getOrCreateAkteThreadByRoblox(interaction, robloxUsername);
+        akteThread = await getOrCreateAkteThreadByRoblox(interaction, setup, robloxUsername);
 
         if (akteThread) {
           const akteEmbed = new EmbedBuilder()
@@ -676,13 +639,20 @@ module.exports = {
         });
       }
 
-      if (!interaction.isButton()) return;
+      if (interaction.isButton() && interaction.customId.startsWith("notruf_notify_ausruecken_")) {
+        const notrufSetup = setup?.notruf;
 
-      if (interaction.customId.startsWith("notruf_notify_ausruecken_")) {
+        if (!notrufSetup) {
+          return interaction.reply({
+            content: "❌ Notruf-System wurde nicht eingerichtet.",
+            ephemeral: true
+          });
+        }
+
         const hasEinsatzRole =
-          interaction.member.roles.cache.has(setup.einsatzRoleId) ||
-          interaction.member.roles.cache.has(setup.pingRoleId) ||
-          interaction.member.roles.cache.has(setup.roleId);
+          interaction.member.roles.cache.has(notrufSetup.einsatzRoleId) ||
+          interaction.member.roles.cache.has(notrufSetup.pingRoleId) ||
+          interaction.member.roles.cache.has(notrufSetup.roleId);
 
         if (!hasEinsatzRole) {
           return interaction.reply({
@@ -743,9 +713,7 @@ module.exports = {
 
               setStatusField(akteEmbed, "Einsatzkräfte unterwegs");
 
-              const index = akteEmbed.data.fields.findIndex(
-                f => f.name === "🚓 Ausgerückt von"
-              );
+              const index = akteEmbed.data.fields.findIndex(f => f.name === "🚓 Ausgerückt von");
 
               if (index !== -1) {
                 akteEmbed.spliceFields(index, 1, {
@@ -769,12 +737,13 @@ module.exports = {
         return;
       }
 
-      if (interaction.customId === "notruf_close") {
+      if (interaction.isButton() && interaction.customId === "notruf_close") {
+        const notrufSetup = setup?.notruf;
         const topicData = parseTopic(interaction.channel.topic);
 
         const hasLeitstelleRole =
-          interaction.member.roles.cache.has(setup.leitstellenRoleId) ||
-          interaction.member.roles.cache.has(setup.roleId);
+          interaction.member.roles.cache.has(notrufSetup.leitstellenRoleId) ||
+          interaction.member.roles.cache.has(notrufSetup.roleId);
 
         const isOwner = topicData.owner === interaction.user.id;
 

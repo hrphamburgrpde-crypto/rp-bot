@@ -15,6 +15,7 @@ module.exports = {
       PermissionFlagsBits.KickMembers |
       PermissionFlagsBits.BanMembers
     )
+
     .addChannelOption(option =>
       option
         .setName("forum-kanal")
@@ -22,12 +23,14 @@ module.exports = {
         .addChannelTypes(ChannelType.GuildForum)
         .setRequired(true)
     )
+
     .addRoleOption(option =>
       option
         .setName("eintrag-rechte-rolle")
         .setDescription("Rolle, die Akten-Einträge erstellen darf")
         .setRequired(true)
     )
+
     .addStringOption(option =>
       option
         .setName("typen")
@@ -41,27 +44,43 @@ module.exports = {
     const typenInput = interaction.options.getString("typen");
 
     const typen = [...new Set(
-      typenInput.split(",").map(t => t.trim()).filter(Boolean)
+      typenInput
+        .split(",")
+        .map(t => t.trim())
+        .filter(Boolean)
     )];
 
-    await GuildSetup.findOneAndUpdate(
-      { guildId: interaction.guild.id },
-      {
-        $set: {
-          guildId: interaction.guild.id,
-          "akte.forumChannelId": forum.id,
-          "akte.entryRoleId": role.id,
-          "akte.typen": typen
-        },
-        $setOnInsert: {
-          "akte.akten": {}
-        }
-      },
-      { upsert: true }
-    );
+    let setup = await GuildSetup.findOne({
+      guildId: interaction.guild.id
+    });
+
+    if (!setup) {
+      setup = new GuildSetup({
+        guildId: interaction.guild.id
+      });
+    }
+
+    const oldAkten =
+      setup.akte && setup.akte.akten
+        ? setup.akte.akten
+        : {};
+
+    setup.akte = {
+      forumChannelId: forum.id,
+      entryRoleId: role.id,
+      typen,
+      akten: oldAkten
+    };
+
+    setup.markModified("akte");
+    await setup.save();
 
     return interaction.reply({
-      content: `✅ Akten-System wurde gespeichert.\nTypen: ${typen.join(", ")}`,
+      content:
+        `✅ Akten-System wurde gespeichert.\n` +
+        `Forum: ${forum}\n` +
+        `Eintrag-Rechte-Rolle: ${role}\n` +
+        `Typen: ${typen.join(", ")}`,
       ephemeral: true
     });
   }
