@@ -10,15 +10,18 @@ function cleanName(name) {
   return String(name || "Unbekannt").replace(/[^a-zA-Z0-9-_äöüÄÖÜß]/g, "");
 }
 
-async function getOrCreateAkteThread(interaction, setup, robloxUsername, discordUser = null) {
+async function getOrCreateAkteThread(interaction, setup, robloxUsername) {
   if (!setup.akte.akten) setup.akte.akten = {};
 
-  const safeRoblox = String(robloxUsername || "Unbekannt");
+  const safeRoblox = String(robloxUsername).trim();
   const akteKey = `roblox_${safeRoblox.toLowerCase()}`;
   const savedThreadId = setup.akte.akten[akteKey];
 
   if (savedThreadId) {
-    const oldThread = await interaction.guild.channels.fetch(savedThreadId).catch(() => null);
+    const oldThread = await interaction.guild.channels
+      .fetch(savedThreadId)
+      .catch(() => null);
+
     if (oldThread) return oldThread;
   }
 
@@ -31,17 +34,14 @@ async function getOrCreateAkteThread(interaction, setup, robloxUsername, discord
       embeds: [
         new EmbedBuilder()
           .setTitle(`📁 Akte von ${safeRoblox}`)
-          .setDescription(
-            discordUser
-              ? `Akte für Roblox-User **${safeRoblox}** / Discord: ${discordUser}`
-              : `Akte für Roblox-User **${safeRoblox}**`
-          )
+          .setDescription(`Gemeinsame Akte für Roblox-User **${safeRoblox}**.`)
           .setColor("Blue")
       ]
     }
   });
 
   setup.akte.akten[akteKey] = thread.id;
+  setup.markModified("akte");
   await setup.save();
 
   return thread;
@@ -51,12 +51,14 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("akten-eintrag")
     .setDescription("Erstellt einen Eintrag in einer Akte")
+
     .addStringOption(option =>
       option
         .setName("roblox_username")
         .setDescription("Roblox Username")
         .setRequired(true)
     )
+
     .addStringOption(option =>
       option
         .setName("typ")
@@ -64,18 +66,21 @@ module.exports = {
         .setAutocomplete(true)
         .setRequired(true)
     )
+
     .addStringOption(option =>
       option
         .setName("beschreibung")
         .setDescription("Beschreibung")
         .setRequired(true)
     )
+
     .addStringOption(option =>
       option
         .setName("strafe")
         .setDescription("Strafe / Maßnahme")
         .setRequired(true)
     )
+
     .addUserOption(option =>
       option
         .setName("discord_user")
@@ -84,7 +89,9 @@ module.exports = {
     ),
 
   async autocomplete(interaction) {
-    const setup = await GuildSetup.findOne({ guildId: interaction.guild.id });
+    const setup = await GuildSetup.findOne({
+      guildId: interaction.guild.id
+    });
 
     if (!setup || !setup.akte || !setup.akte.typen) {
       return interaction.respond([]);
@@ -104,7 +111,9 @@ module.exports = {
   },
 
   async execute(interaction) {
-    const setup = await GuildSetup.findOne({ guildId: interaction.guild.id });
+    const setup = await GuildSetup.findOne({
+      guildId: interaction.guild.id
+    });
 
     if (!setup || !setup.akte) {
       return interaction.reply({
@@ -113,18 +122,25 @@ module.exports = {
       });
     }
 
+    const requiredRoleId = setup.akte.entryRoleId;
+
     const hasPermission =
       interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
-      interaction.member.roles.cache.has(setup.akte.entryRoleId);
+      interaction.member.roles.cache.has(requiredRoleId);
 
+    // WICHTIG: Hier wird SOFORT beendet.
+    // Vor diesem Punkt wird KEINE Akte erstellt.
     if (!hasPermission) {
       return interaction.reply({
-        content: "❌ Keine Rechte.",
+        content: "❌ Du hast keine Rechte für Akten-Einträge.",
         ephemeral: true
       });
     }
 
-    const robloxUsername = interaction.options.getString("roblox_username");
+    const robloxUsername = interaction.options
+      .getString("roblox_username")
+      .trim();
+
     const typ = interaction.options.getString("typ");
     const beschreibung = interaction.options.getString("beschreibung");
     const strafe = interaction.options.getString("strafe");
@@ -136,27 +152,60 @@ module.exports = {
 
     if (!finalTyp) {
       return interaction.reply({
-        content: `❌ Diesen Typ gibt es nicht.\nErlaubte Typen: ${setup.akte.typen.join(", ")}`,
+        content:
+          `❌ Diesen Typ gibt es nicht.\n` +
+          `Erlaubte Typen: ${setup.akte.typen.join(", ")}`,
         ephemeral: true
       });
     }
 
+    const thread = await getOrCreateAkteThread(
+      interaction,
+      setup,
+      robloxUsername
+    );
+
     const timestamp = Math.floor(Date.now() / 1000);
-    const thread = await getOrCreateAkteThread(interaction, setup, robloxUsername, discordUser);
 
     const embed = new EmbedBuilder()
       .setTitle(`📄 ${finalTyp}`)
       .setColor("Orange")
       .addFields(
-        { name: "Roblox Username", value: robloxUsername, inline: true },
-        { name: "Discord User", value: discordUser ? `${discordUser}` : "Nicht angegeben", inline: true },
-        { name: "Eingetragen von", value: `${interaction.user}`, inline: true },
-        { name: "Zeitpunkt", value: `<t:${timestamp}:F>`, inline: false },
-        { name: "Beschreibung", value: beschreibung, inline: false },
-        { name: "Strafe / Maßnahme", value: strafe, inline: false }
+        {
+          name: "Roblox Username",
+          value: robloxUsername,
+          inline: true
+        },
+        {
+          name: "Discord User",
+          value: discordUser ? `${discordUser}` : "Nicht angegeben",
+          inline: true
+        },
+        {
+          name: "Eingetragen von",
+          value: `${interaction.user}`,
+          inline: true
+        },
+        {
+          name: "Zeitpunkt",
+          value: `<t:${timestamp}:F>`,
+          inline: false
+        },
+        {
+          name: "Beschreibung",
+          value: beschreibung,
+          inline: false
+        },
+        {
+          name: "Strafe / Maßnahme",
+          value: strafe,
+          inline: false
+        }
       );
 
-    await thread.send({ embeds: [embed] });
+    await thread.send({
+      embeds: [embed]
+    });
 
     return interaction.reply({
       content: `✅ Eintrag wurde erstellt: ${thread}`,
