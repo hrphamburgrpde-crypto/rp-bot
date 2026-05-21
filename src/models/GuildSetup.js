@@ -25,7 +25,11 @@ const guildSetupSchema = new mongoose.Schema({
   duty: {
     type: Object,
     default: null
-  }
+  },
+strafeNachtragen: {
+  type: Object,
+  default: null
+}
 });
 
 module.exports =

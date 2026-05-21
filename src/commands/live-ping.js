@@ -38,19 +38,26 @@ module.exports = {
       const ram =
         (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
 
+      // Status Texte wechseln automatisch
+      const statusTexts = [
+        "🟢 **SYSTEM ONLINE**",
+        "⚡ **LIVE MONITORING AKTIV**",
+        "🚀 **BOT LÄUFT STABIL**",
+        "📡 **STATUS WIRD AKTUALISIERT**"
+      ];
+
+      const statusText =
+        statusTexts[
+          Math.floor(Date.now() / 5000) % statusTexts.length
+        ];
+
       return new EmbedBuilder()
 
         .setColor("#00ff88")
 
         .setTitle("🚀 LIVE BOT STATUS")
 
-        .setDescription(
-          [
-            "```ansi",
-            "\u001b[1;32m🟢 SYSTEM ONLINE\u001b[0m",
-            "```"
-          ].join("\n")
-        )
+        .setDescription(statusText)
 
         .setThumbnail(client.user.displayAvatarURL())
 
@@ -58,64 +65,55 @@ module.exports = {
 
           {
             name: "📶 Ping",
-            value:
-              `>>> \`${ping}ms\``,
+            value: `>>> \`${ping}ms\``,
             inline: true
           },
 
           {
             name: "🕒 Uptime",
-            value:
-              `>>> \`${uptime}\``,
+            value: `>>> \`${uptime}\``,
             inline: true
           },
 
           {
             name: "💾 RAM",
-            value:
-              `>>> \`${ram} MB\``,
+            value: `>>> \`${ram} MB\``,
             inline: true
           },
 
           {
             name: "🏠 Server",
-            value:
-              `>>> \`${guilds}\``,
+            value: `>>> \`${guilds}\``,
             inline: true
           },
 
           {
             name: "👥 Benutzer",
-            value:
-              `>>> \`${users}\``,
+            value: `>>> \`${users}\``,
             inline: true
           },
 
           {
             name: "⚡ Node.js",
-            value:
-              `>>> \`${process.version}\``,
+            value: `>>> \`${process.version}\``,
             inline: true
           },
 
           {
             name: "🌐 Plattform",
-            value:
-              `>>> \`${process.platform}\``,
+            value: `>>> \`${process.platform}\``,
             inline: true
           },
 
           {
             name: "🤖 Bot",
-            value:
-              `>>> \`${client.user.tag}\``,
+            value: `>>> \`${client.user.tag}\``,
             inline: true
           },
 
           {
             name: "🔄 Live Update",
-            value:
-              ">>> `Alle 5 Sekunden`",
+            value: ">>> `Alle 5 Sekunden`",
             inline: true
           }
         )
@@ -125,8 +123,7 @@ module.exports = {
         )
 
         .setFooter({
-          text:
-            "Roleplay-System • Live Monitoring"
+          text: "Roleplay-System • Live Monitoring"
         })
 
         .setTimestamp();
