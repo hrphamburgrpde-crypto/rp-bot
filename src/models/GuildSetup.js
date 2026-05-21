@@ -25,6 +25,10 @@ ki: {
     type: Object,
     default: null
   },
+akteEintraege: {
+  type: Object,
+  default: {}
+},
 
   duty: {
     type: Object,
