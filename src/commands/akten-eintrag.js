@@ -41,8 +41,15 @@ async function getOrCreateAkteThread(interaction, setup, robloxUsername) {
   });
 
   setup.akte.akten[akteKey] = thread.id;
-  setup.markModified("akte");
-  await setup.save();
+
+  await GuildSetup.collection.updateOne(
+    { guildId: interaction.guild.id },
+    {
+      $set: {
+        [`akte.akten.${akteKey}`]: thread.id
+      }
+    }
+  );
 
   return thread;
 }
@@ -89,7 +96,7 @@ module.exports = {
     ),
 
   async autocomplete(interaction) {
-    const setup = await GuildSetup.findOne({
+    const setup = await GuildSetup.collection.findOne({
       guildId: interaction.guild.id
     });
 
@@ -111,7 +118,7 @@ module.exports = {
   },
 
   async execute(interaction) {
-    const setup = await GuildSetup.findOne({
+    const setup = await GuildSetup.collection.findOne({
       guildId: interaction.guild.id
     });
 
@@ -128,8 +135,6 @@ module.exports = {
       interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
       interaction.member.roles.cache.has(requiredRoleId);
 
-    // WICHTIG: Hier wird SOFORT beendet.
-    // Vor diesem Punkt wird KEINE Akte erstellt.
     if (!hasPermission) {
       return interaction.reply({
         content: "❌ Du hast keine Rechte für Akten-Einträge.",
@@ -206,6 +211,35 @@ module.exports = {
     await thread.send({
       embeds: [embed]
     });
+
+    const robloxKey = robloxUsername.toLowerCase();
+
+    const oldEntries =
+      setup.akteEintraege && setup.akteEintraege[robloxKey]
+        ? setup.akteEintraege[robloxKey]
+        : [];
+
+    oldEntries.push({
+      typ: finalTyp,
+      beschreibung,
+      strafe,
+      discordUserId: discordUser ? discordUser.id : null,
+      discordUserTag: discordUser ? discordUser.tag : null,
+      beamterId: interaction.user.id,
+      beamterTag: interaction.user.tag,
+      timestamp
+    });
+
+    await GuildSetup.collection.updateOne(
+      {
+        guildId: interaction.guild.id
+      },
+      {
+        $set: {
+          [`akteEintraege.${robloxKey}`]: oldEntries
+        }
+      }
+    );
 
     return interaction.reply({
       content: `✅ Eintrag wurde erstellt: ${thread}`,
