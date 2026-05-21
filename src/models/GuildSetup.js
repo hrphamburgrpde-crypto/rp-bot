@@ -16,6 +16,10 @@ const guildSetupSchema = new mongoose.Schema({
     type: Object,
     default: null
   },
+ki: {
+  type: Object,
+  default: null
+},
 
   akte: {
     type: Object,
